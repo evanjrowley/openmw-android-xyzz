@@ -21,6 +21,10 @@ Actively developed on the `openmw-0.51` branch.
   (see `.github/workflows/ci.yml`); the APK and unstripped `libopenmw.so`
   are published as workflow artifacts. Release builds are tagged
   (e.g. `0.51.0-50`).
+* On the Retroid Pocket 6, the **Analog** and **Digital** trigger switch
+  modes are supported: L2/R2 work in-game (Activate/Use) and in the
+  controller menus. The **Both** trigger mode is not supported — it
+  double-reports trigger events in menus.
 * This fork is not distributed through Google Play or F-Droid, and it is
   not affiliated with https://omw.xyz.is/ — build it yourself or grab the
   artifacts from the Actions/Releases tabs.
