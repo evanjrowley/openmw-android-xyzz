@@ -1,26 +1,6 @@
 --- a/src/joystick/SDL_gamecontroller.c	2025-01-31 18:41:09.000000000 -0500
-+++ b/src/joystick/SDL_gamecontroller.c	2026-09-26 16:59:30.710575383 -0400
-@@ -236,6 +236,19 @@
-                 float normalized_value = (float)(value - match->input.axis.axis_min) / (match->input.axis.axis_max - match->input.axis.axis_min);
-                 value = match->output.axis.axis_min + (int)(normalized_value * (match->output.axis.axis_max - match->output.axis.axis_min));
-             }
-+            /* OPENMW_ANDROID_TRIGGER_DIAG: rate-limited trace of trigger-axis
-+             * binding decisions, for auditing the Retroid trigger modes. */
-+            if ((match->output.axis.axis == SDL_CONTROLLER_AXIS_TRIGGERLEFT ||
-+                 match->output.axis.axis == SDL_CONTROLLER_AXIS_TRIGGERRIGHT) &&
-+                value != (Sint16)gamecontroller->last_match_axis[match->output.axis.axis] - 0) {
-+                static Uint32 last_log;
-+                Uint32 now = SDL_GetTicks();
-+                if (!last_log || now - last_log > 200) {
-+                    last_log = now;
-+                    SDL_Log("DIAG TRIG: in a%d=%d -> out t%d=%d (binding idx %d)", axis, value,
-+                            match->output.axis.axis, (Sint16)value, (int)(match - gamecontroller->bindings));
-+                }
-+            }
-             SDL_PrivateGameControllerAxis(gamecontroller, match->output.axis.axis, (Sint16)value);
-         } else {
-             Uint8 state;
-@@ -482,6 +495,20 @@
++++ b/src/joystick/SDL_gamecontroller.c	2026-09-26 19:29:16.292153172 -0400
+@@ -482,6 +482,20 @@
      if (button_mask & (1 << SDL_CONTROLLER_BUTTON_DPAD_RIGHT)) {
          SDL_strlcat(mapping_string, "dpright:b14,", sizeof(mapping_string));
      }
@@ -41,7 +21,7 @@
      if (axis_mask & (1 << SDL_CONTROLLER_AXIS_LEFTX)) {
          SDL_strlcat(mapping_string, "leftx:a0,", sizeof(mapping_string));
      }
-@@ -495,10 +522,24 @@
+@@ -495,10 +509,24 @@
          SDL_strlcat(mapping_string, "righty:a3,", sizeof(mapping_string));
      }
      if (axis_mask & (1 << SDL_CONTROLLER_AXIS_TRIGGERLEFT)) {

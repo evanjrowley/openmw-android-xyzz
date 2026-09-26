@@ -1,0 +1,84 @@
+diff --git a/apps/openmw/mwinput/bindingsmanager.cpp b/apps/openmw/mwinput/bindingsmanager.cpp
+index ac5d9b5730..7af8294a62 100644
+--- a/apps/openmw/mwinput/bindingsmanager.cpp
++++ b/apps/openmw/mwinput/bindingsmanager.cpp
+@@ -657,9 +657,11 @@ namespace MWInput
+         mInputBinder->buttonReleased(deviceID, arg);
+     }
+ 
+-    void BindingsManager::controllerAxisMoved(int deviceID, const SDL_ControllerAxisEvent& arg)
++    void BindingsManager::controllerAxisMoved(int deviceID, const SDL_ControllerAxisEvent& arg, bool trackOnly)
+     {
++        mTrackOnlyAxisEvents = trackOnly;
+         mInputBinder->axisMoved(deviceID, arg);
++        mTrackOnlyAxisEvents = false;
+     }
+ 
+     SDL_Scancode BindingsManager::getKeyBinding(int actionId)
+@@ -696,7 +698,7 @@ namespace MWInput
+                 action = A_CycleSpellLeft;
+         }
+ 
+-        if (previousValue <= 0.6 && currentValue > 0.6)
++        if (!mTrackOnlyAxisEvents && previousValue <= 0.6 && currentValue > 0.6)
+             manager->executeAction(action);
+     }
+ 
+diff --git a/apps/openmw/mwinput/bindingsmanager.hpp b/apps/openmw/mwinput/bindingsmanager.hpp
+index 40c2076d3c..53bcbaf3f2 100644
+--- a/apps/openmw/mwinput/bindingsmanager.hpp
++++ b/apps/openmw/mwinput/bindingsmanager.hpp
+@@ -59,7 +59,7 @@ namespace MWInput
+         void controllerRemoved(const SDL_ControllerDeviceEvent& arg);
+         void controllerButtonPressed(int deviceID, const SDL_ControllerButtonEvent& arg);
+         void controllerButtonReleased(int deviceID, const SDL_ControllerButtonEvent& arg);
+-        void controllerAxisMoved(int deviceID, const SDL_ControllerAxisEvent& arg);
++        void controllerAxisMoved(int deviceID, const SDL_ControllerAxisEvent& arg, bool trackOnly = false);
+ 
+         SDL_Scancode getKeyBinding(int actionId);
+ 
+@@ -76,6 +76,7 @@ namespace MWInput
+         std::filesystem::path mUserFile;
+ 
+         bool mDragDrop;
++        bool mTrackOnlyAxisEvents = false;
+     };
+ }
+ #endif
+diff --git a/apps/openmw/mwinput/controllermanager.cpp b/apps/openmw/mwinput/controllermanager.cpp
+index d921376f9c..9c20ff223c 100644
+--- a/apps/openmw/mwinput/controllermanager.cpp
++++ b/apps/openmw/mwinput/controllermanager.cpp
+@@ -227,15 +227,28 @@ namespace MWInput
+             return;
+ 
+         mJoystickLastUsed = true;
++        const bool isTriggerAxis = arg.axis == SDL_CONTROLLER_AXIS_TRIGGERRIGHT
++            || arg.axis == SDL_CONTROLLER_AXIS_TRIGGERLEFT;
+         if (MWBase::Environment::get().getWindowManager()->isGuiMode())
+         {
+-            if (gamepadToGuiControl(arg))
++            bool consumed = gamepadToGuiControl(arg);
++            if (consumed && isTriggerAxis)
++            {
++                /* The GUI layer uses trigger axis events for window cycling and
++                 * zoom, and swallows them. Feed the bindings anyway in track-only
++                 * mode so trigger-bound controls (e.g. Activate) keep their true
++                 * rest value - otherwise a release eaten by a menu leaves the
++                 * control at full pull and the next pull misses its rising edge. */
++                mBindingsManager->controllerAxisMoved(deviceID, arg, true);
++            }
++            if (consumed)
+                 return;
+         }
+-        else if (mBindingsManager->actionIsActive(A_TogglePOV)
+-            && (arg.axis == SDL_CONTROLLER_AXIS_TRIGGERRIGHT || arg.axis == SDL_CONTROLLER_AXIS_TRIGGERLEFT))
++        else if (mBindingsManager->actionIsActive(A_TogglePOV) && isTriggerAxis)
+         {
+-            // Preview Mode Gamepad Zooming; do not propagate to mBindingsManager
++            // Preview Mode Gamepad Zooming; do not propagate as action input
++            // (but keep the bindings tracking the physical axis, as above).
++            mBindingsManager->controllerAxisMoved(deviceID, arg, true);
+             return;
+         }
+         mBindingsManager->controllerAxisMoved(deviceID, arg);
