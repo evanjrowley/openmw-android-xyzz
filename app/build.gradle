@@ -26,7 +26,7 @@ android {
 
     defaultConfig {
         applicationId "is.xyz.omw"
-        versionCode 50
+        versionCode 51
         versionName calculateVersion()
 
         minSdk 21
