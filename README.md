@@ -1,5 +1,7 @@
 # OpenMW for Android — OpenMW 0.51.0
 
+[![CI](https://github.com/evanjrowley/openmw-android-xyzz/actions/workflows/ci.yml/badge.svg?branch=openmw-0.51)](https://github.com/evanjrowley/openmw-android-xyzz/actions/workflows/ci.yml)
+
 Android port of [OpenMW](https://openmw.org/) **0.51.0**, a modern open-source
 reimplementation of The Elder Scrolls III: Morrowind. This fork revives the
 archived OpenMW for Android project (the 0.48-era codebase) and updates it to
