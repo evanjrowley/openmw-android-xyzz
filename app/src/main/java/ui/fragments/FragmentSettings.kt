@@ -67,8 +67,11 @@ class FragmentSettings : PreferenceFragment(), OnSharedPreferenceChangeListener 
         }
 
         findPreference("game_files").setOnPreferenceClickListener {
-            if (ContextCompat.checkSelfPermission(activity,
-                    Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+            if (!permission.PermissionHelper.hasFullStorageAccess(activity)) {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R)
+                    permission.PermissionHelper.requestAllFilesAccess(activity)
+                else
+                    permission.PermissionHelper.getWriteExternalStoragePermission(activity)
                 showError(R.string.permissions_error_title, R.string.permissions_error_message)
             } else {
                 val chooser = StorageChooser.Builder()

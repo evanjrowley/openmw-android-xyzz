@@ -26,6 +26,7 @@ import android.app.PendingIntent
 import android.app.ProgressDialog
 import android.content.*
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.preference.PreferenceManager
 import android.system.ErrnoException
@@ -97,11 +98,36 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
+     * Explains why broad storage access is needed (game data may live
+     * anywhere on shared storage, including a removable SD card) and sends
+     * the user to the system "All files access" screen.
+     */
+    private fun requestStorageAccess() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            AlertDialog.Builder(this)
+                .setTitle(R.string.all_files_access_title)
+                .setMessage(R.string.all_files_access_message)
+                .setPositiveButton(R.string.all_files_access_open_settings) { _, _ ->
+                    PermissionHelper.requestAllFilesAccess(this)
+                }
+                .setNegativeButton(android.R.string.cancel, null)
+                .show()
+        } else {
+            PermissionHelper.getWriteExternalStoragePermission(this)
+        }
+    }
+
+    /**
      * Checks that the game is properly installed and if so, starts the game
      * - the game files must be selected
      * - there must be at least 1 activated mod (user can ignore this warning)
      */
     private fun checkStartGame() {
+        if (!PermissionHelper.hasFullStorageAccess(this)) {
+            requestStorageAccess()
+            return
+        }
+
         // First, check that there are game files present
         val inst = GameInstaller(prefs.getString("game_files", "")!!)
         if (!inst.check()) {

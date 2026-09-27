@@ -193,7 +193,16 @@ public class HIDDeviceManager {
         filter.addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED);
         filter.addAction(UsbManager.ACTION_USB_DEVICE_DETACHED);
         filter.addAction(HIDDeviceManager.ACTION_USB_PERMISSION);
-        mContext.registerReceiver(mUsbBroadcast, filter);
+        /* Context.RECEIVER_NOT_EXPORTED (0x4), but don't require SDK 33.
+         * Apps targeting SDK 34 must declare an export flag for receivers of
+         * non-system broadcasts (USB permission replies) or registration
+         * throws SecurityException on Android 14. System broadcasts are
+         * delivered regardless of the flag. */
+        if (Build.VERSION.SDK_INT >= 33 /* T */) {
+            mContext.registerReceiver(mUsbBroadcast, filter, 0x4 /* RECEIVER_NOT_EXPORTED */);
+        } else {
+            mContext.registerReceiver(mUsbBroadcast, filter);
+        }
 
         for (UsbDevice usbDevice : mUsbManager.getDeviceList().values()) {
             handleUsbDeviceAttached(usbDevice);
@@ -404,7 +413,12 @@ public class HIDDeviceManager {
         IntentFilter filter = new IntentFilter();
         filter.addAction(BluetoothDevice.ACTION_ACL_CONNECTED);
         filter.addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED);
-        mContext.registerReceiver(mBluetoothBroadcast, filter);
+        /* RECEIVER_NOT_EXPORTED for SDK 34 targets, see the USB receiver. */
+        if (Build.VERSION.SDK_INT >= 33 /* T */) {
+            mContext.registerReceiver(mBluetoothBroadcast, filter, 0x4 /* RECEIVER_NOT_EXPORTED */);
+        } else {
+            mContext.registerReceiver(mBluetoothBroadcast, filter);
+        }
 
         if (mIsChromebook) {
             mHandler = new Handler(Looper.getMainLooper());

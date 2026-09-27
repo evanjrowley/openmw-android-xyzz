@@ -30,10 +30,11 @@ android {
         versionName calculateVersion()
 
         minSdk 21
-        // Keep targetSdk below 30 for now to preserve the legacy
-        // external-storage behavior the launcher relies on; bump only after
-        // verifying the storage flow on real devices.
-        targetSdk 29
+        // targetSdk 34 moves shared storage to MANAGE_EXTERNAL_STORAGE
+        // ("All files access", requested from its dedicated settings screen);
+        // see PermissionHelper. Bump to 35 only after verifying SDL's
+        // edge-to-edge behavior, and note compileSdk must follow.
+        targetSdk 34
 
         ndk {
             // other ABIs can be added once their native builds are revived

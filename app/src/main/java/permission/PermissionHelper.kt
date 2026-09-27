@@ -21,12 +21,44 @@ package permission
 
 import android.Manifest
 import android.app.Activity
+import android.content.ActivityNotFoundException
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
+import android.os.Environment
+import android.provider.Settings
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 
 object PermissionHelper {
+    const val STORAGE_PERMISSION_REQUEST = 23
+
+    /**
+     * True when the app may read arbitrary shared-storage paths (game data
+     * may live anywhere, including a removable SD card). Android 10 and
+     * below rely on the legacy WRITE_EXTERNAL_STORAGE grant; Android 11+
+     * requires "All files access" (MANAGE_EXTERNAL_STORAGE).
+     */
+    fun hasFullStorageAccess(activity: Activity): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
+            Environment.isExternalStorageManager()
+        else
+            ContextCompat.checkSelfPermission(activity,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+    }
+
+    /** Opens the system "All files access" settings page for this app. */
+    fun requestAllFilesAccess(activity: Activity) {
+        val perApp = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+            Uri.parse("package:" + activity.packageName))
+        try {
+            activity.startActivity(perApp)
+        } catch (e: ActivityNotFoundException) {
+            activity.startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+        }
+    }
+
     fun getWriteExternalStoragePermission(activity: Activity) {
         if (Build.VERSION.SDK_INT >= 23) {
             if (ContextCompat.checkSelfPermission(activity,
