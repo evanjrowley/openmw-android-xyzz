@@ -59,6 +59,15 @@ android {
         buildConfig true
     }
 
+    signingConfigs {
+        debug {
+            // Committed so CI releases sign with the same key as local
+            // builds - runner-generated debug keystores would make every
+            // release uninstall-reinstall. Standard debug key, not secret.
+            storeFile rootProject.file('app/debug.keystore')
+        }
+    }
+
     buildTypes {
         release {
             minifyEnabled false
@@ -67,6 +76,7 @@ android {
         debug {
             applicationIdSuffix ".debug"
             debuggable true
+            signingConfig signingConfigs.debug
         }
     }
 
