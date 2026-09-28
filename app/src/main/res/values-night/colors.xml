@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Dark-mode palette for the launcher. Applies to all flavors when the
+         system dark theme is on; flavor colors.xml values win in light mode. -->
+    <color name="colorPrimary">#212121</color>
+    <color name="colorPrimaryDark">#000000</color>
+    <color name="colorAccent">#FF4081</color>
+
+    <color name="modItemBackgroundColor">#404040</color>
+    <color name="modItemTextColor">#FFFFFF</color>
+</resources>

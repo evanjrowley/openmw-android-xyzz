@@ -11,11 +11,12 @@
         <item name="android:textColor">#FFFFFFFF</item>
     </style>
 
-    <style name="MyTheme.Base" parent="Theme.AppCompat.Light.NoActionBar">
+    <style name="MyTheme.Base" parent="Theme.AppCompat.DayNight.NoActionBar">
         <item name="colorPrimary">@color/colorPrimary</item>
         <item name="colorPrimaryDark">@color/colorPrimaryDark</item>
         <item name="colorAccent">@color/colorAccent</item>
         <item name="actionBarStyle">@style/MyActionBar</item>
+        <item name="android:statusBarColor">?attr/colorPrimaryDark</item>
     </style>
 
     <style name="MyCustomTextAppearance" parent="TextAppearance.Design.Tab">

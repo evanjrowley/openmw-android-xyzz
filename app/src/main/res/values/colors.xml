@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Light-mode values; values-night overrides these for dark mode. -->
+    <color name="modItemBackgroundColor">#FFFFFF</color>
+    <color name="modItemTextColor">#000000</color>
+</resources>

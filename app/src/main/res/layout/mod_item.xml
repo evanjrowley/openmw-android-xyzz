@@ -4,7 +4,7 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="horizontal"
-    android:background="@android:color/white"
+    android:background="@color/modItemBackgroundColor"
     >
 
     <ImageView
@@ -25,7 +25,7 @@
         android:layout_weight="1"
         android:paddingTop="20dp"
         android:paddingBottom="20dp"
-        android:textColor="@android:color/black"
+        android:textColor="@color/modItemTextColor"
     />
 
     <CheckBox
