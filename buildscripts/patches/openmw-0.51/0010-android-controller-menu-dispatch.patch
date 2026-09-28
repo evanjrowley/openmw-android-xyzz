@@ -1,0 +1,192 @@
+From db25e6e64ccb512db6af4149580ca2b4b2cb03d0 Mon Sep 17 00:00:00 2001
+From: ZCode <zcode@localhost>
+Date: Mon, 28 Sep 2026 16:02:47 -0400
+Subject: [PATCH] Android: controller menu dispatch fixes (save dialog, cursor
+ gating)
+
+Three related controller-menu defects, diagnosed by driving the game
+over ADB with injected controller events:
+
+1. SaveGameDialog never receives controller input. It is owned by the
+   main menu and is not part of any GuiModeState, so
+   WindowManager::getActiveControllerWindow() always resolves to the
+   MainMenu while the dialog is up, and MainMenu::onControllerButtonEvent
+   consumed every button. Loading a chosen save controller-only was
+   impossible. MainMenu now forwards to the dialog's own complete
+   handler when it is visible (dpad up/down row selection, dpad left/
+   right OK-vs-Cancel focus, A activate, B cancel, Y character).
+
+2. On Android, A in menus was permanently hijacked as a mouse click at
+   the cursor position. The Android absolute-touch bridge keeps the menu
+   cursor logically visible, so getCursorVisible() (used as treatAsMouse)
+   was true forever and the 'fall through to mouse click' path starved
+   every cursor-allowed window handler. Gate the fallthrough on stick
+   engagement: A clicks with the cursor only right after the stick moved
+   it; any other button press re-engages per-window handling.
+
+3. dpad-down on the main/pause menu did not move the focus forward
+   (plain Tab finds nothing in the forward chain), making downward
+   navigation impossible while dpad-up worked. Step geometrically with
+   ArrowDown instead.
+
+Also adds a temporary ControllerDispatch log line so menu dispatch can
+be verified from openmw.log on device.
+---
+ apps/openmw/mwgui/mainmenu.cpp            | 14 +++++++++++++-
+ apps/openmw/mwgui/savegamedialog.hpp      |  6 +++++-
+ apps/openmw/mwgui/windowmanagerimp.cpp    | 10 ++++++++--
+ apps/openmw/mwinput/controllermanager.cpp | 19 +++++++++++++++++--
+ apps/openmw/mwinput/controllermanager.hpp |  6 ++++++
+ 5 files changed, 49 insertions(+), 6 deletions(-)
+
+diff --git a/apps/openmw/mwgui/mainmenu.cpp b/apps/openmw/mwgui/mainmenu.cpp
+index 1e1a9e72cb..8c2d0a5968 100644
+--- a/apps/openmw/mwgui/mainmenu.cpp
++++ b/apps/openmw/mwgui/mainmenu.cpp
+@@ -210,6 +210,15 @@ namespace MWGui
+ 
+     bool MainMenu::onControllerButtonEvent(const SDL_ControllerButtonEvent& arg)
+     {
++        // OPENMW_ANDROID_051_CONTROLLER_MENU_DISPATCH
++        // The save/load dialog is owned by the main menu and is not part of
++        // any GuiModeState, so getActiveControllerWindow() always resolves to
++        // the main menu while the dialog is up. Forward the event so the
++        // dialog's own controller handler (dpad row selection, dpad left/
++        // right OK-vs-Cancel focus, A activate, B cancel, Y character) runs.
++        if (mSaveGameDialog && mSaveGameDialog->isVisible())
++            return mSaveGameDialog->onControllerButtonEvent(arg);
++
+         if (arg.button == SDL_CONTROLLER_BUTTON_A)
+         {
+             MWBase::Environment::get().getWindowManager()->injectKeyPress(MyGUI::KeyCode::Space, 0, false);
+@@ -229,7 +238,10 @@ namespace MWGui
+         }
+         else if (arg.button == SDL_CONTROLLER_BUTTON_DPAD_DOWN)
+         {
+-            MWBase::Environment::get().getWindowManager()->injectKeyPress(MyGUI::KeyCode::Tab, 0, false);
++            // Shift+Tab (dpad up) moves focus backward; plain Tab does not
++            // move it forward here (nothing in the forward Tab chain picks up
++            // key focus on this menu), so step geometrically instead.
++            MWBase::Environment::get().getWindowManager()->injectKeyPress(MyGUI::KeyCode::ArrowDown, 0, false);
+         }
+         return true;
+     }
+diff --git a/apps/openmw/mwgui/savegamedialog.hpp b/apps/openmw/mwgui/savegamedialog.hpp
+index 7263bec537..606a70c16d 100644
+--- a/apps/openmw/mwgui/savegamedialog.hpp
++++ b/apps/openmw/mwgui/savegamedialog.hpp
+@@ -26,6 +26,11 @@ namespace MWGui
+ 
+         ControllerButtons* getControllerButtons() override;
+ 
++        // OPENMW_ANDROID_051_CONTROLLER_MENU_DISPATCH
++        // The dialog lives inside the MainMenu (outside every GuiModeState),
++        // so the main menu forwards controller events to it while visible.
++        bool onControllerButtonEvent(const SDL_ControllerButtonEvent& arg) override;
++
+     private:
+         void confirmDeleteSave();
+ 
+@@ -70,7 +75,6 @@ namespace MWGui
+         const MWState::Character* mCurrentCharacter;
+         const MWState::Slot* mCurrentSlot;
+ 
+-        bool onControllerButtonEvent(const SDL_ControllerButtonEvent& arg) override;
+         bool mOkButtonFocus = true;
+     };
+ 
+diff --git a/apps/openmw/mwgui/windowmanagerimp.cpp b/apps/openmw/mwgui/windowmanagerimp.cpp
+index 9f435f7c44..2b32b38c71 100644
+--- a/apps/openmw/mwgui/windowmanagerimp.cpp
++++ b/apps/openmw/mwgui/windowmanagerimp.cpp
+@@ -893,8 +893,14 @@ namespace MWGui
+ 
+     WindowBase* WindowManager::getActiveControllerWindow()
+     {
+-        if (!mCurrentModals.empty())
+-            return mCurrentModals.back();
++        // OPENMW_ANDROID_051_CONTROLLER_MENU_DISPATCH
++        // Skip modals that were hidden without being popped: closing a menu
++        // while one of its confirmation dialogs is open can orphan the dialog
++        // in mCurrentModals, and an invisible modal would silently consume
++        // every controller button (its base handler reports "handled").
++        for (auto it = mCurrentModals.rbegin(); it != mCurrentModals.rend(); ++it)
++            if ((*it)->isVisible())
++                return *it;
+ 
+         if (mWindows.empty())
+             return nullptr;
+diff --git a/apps/openmw/mwinput/controllermanager.cpp b/apps/openmw/mwinput/controllermanager.cpp
+index 9c20ff223c..591b0da460 100644
+--- a/apps/openmw/mwinput/controllermanager.cpp
++++ b/apps/openmw/mwinput/controllermanager.cpp
+@@ -5,6 +5,8 @@
+ 
+ #include <SDL.h>
+ 
++#include <typeinfo>
++
+ #include <components/debug/debuglog.hpp>
+ #include <components/esm/refid.hpp>
+ #include <components/files/conversion.hpp>
+@@ -35,6 +37,7 @@ namespace MWInput
+         , mGamepadMousePressed(false)
+         , mLeftTriggerGuiPressed(false)
+         , mRightTriggerGuiPressed(false)
++        , mStickCursorActive(false)
+     {
+         if (!controllerBindingsFile.empty())
+         {
+@@ -271,11 +274,22 @@ namespace MWInput
+ 
+         if (Settings::gui().mControllerMenus)
+         {
+-            // Update cursor state.
+-            bool treatAsMouse = winMgr->getCursorVisible();
++            // OPENMW_ANDROID_051_CONTROLLER_CURSOR_ENGAGEMENT
++            // On Android getCursorVisible() keeps the menu cursor "visible"
++            // once shown (the absolute-touch bridge relies on that), so it
++            // cannot distinguish "the player is steering the stick cursor"
++            // from "a cursor happens to be on screen". Gate the A-as-mouse
++            // fallthrough on stick engagement instead: A clicks with the
++            // cursor only right after the stick moved it; any other button
++            // press re-engages per-window controller handling, so window
++            // handlers (save dialog OK, etc.) keep receiving buttons.
++            bool treatAsMouse = winMgr->getCursorVisible() && mStickCursorActive;
++            mStickCursorActive = false;
+             winMgr->setCursorActive(false);
+ 
+             MWGui::WindowBase* topWin = winMgr->getActiveControllerWindow();
++            Log(Debug::Info) << "[Android ControllerDispatch] button=" << arg.button << " topWin="
++                             << (topWin ? typeid(*topWin).name() : "(null)") << " treatAsMouse=" << treatAsMouse;
+             if (topWin && topWin->isVisible())
+             {
+                 // When the inventory tooltip is visible, we don't actually want the A button to
+@@ -407,6 +421,7 @@ namespace MWInput
+                     // Treat the left stick like a cursor, which is the default behavior.
+                     winMgr->setControllerTooltipVisible(false);
+                     winMgr->setCursorVisible(true);
++                    mStickCursorActive = true;
+                     return false;
+                 }
+ 
+diff --git a/apps/openmw/mwinput/controllermanager.hpp b/apps/openmw/mwinput/controllermanager.hpp
+index e5c1a935c4..6540ecd374 100644
+--- a/apps/openmw/mwinput/controllermanager.hpp
++++ b/apps/openmw/mwinput/controllermanager.hpp
+@@ -70,6 +70,12 @@ namespace MWInput
+         bool mGamepadMousePressed;
+         bool mLeftTriggerGuiPressed;
+         bool mRightTriggerGuiPressed;
++        // OPENMW_ANDROID_051_CONTROLLER_CURSOR_ENGAGEMENT
++        // True while the left stick is actively driving the GUI cursor;
++        // cleared by any button press. Gates the "A acts as mouse click"
++        // fallthrough so window handlers (save dialog OK, etc.) still
++        // receive A when the cursor is not being steered.
++        bool mStickCursorActive;
+     };
+ }
+ #endif
+-- 
+2.54.0
+
