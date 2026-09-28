@@ -43,7 +43,11 @@ import ui.controls.GamepadEmulator
  * adb shell am broadcast -p is.xyz.omw_nightly.debug \
  *     -a is.xyz.omw.debug.JOY_STICK --ei stick 0 --ef x 1.0 --ef y 0.0
  * adb shell am broadcast -p is.xyz.omw_nightly.debug \
+ *     -a is.xyz.omw.debug.JOY_PULSE --ei axis 1 --ef value -0.8 --ei duration_ms 400
+ * adb shell am broadcast -p is.xyz.omw_nightly.debug \
  *     -a is.xyz.omw.debug.PAD_BUTTON --ei keycode 96 --ez down true
+ * adb shell am broadcast -p is.xyz.omw_nightly.debug \
+ *     -a is.xyz.omw.debug.STATE --es hint "Caius Cosades"
  * adb shell am broadcast -p is.xyz.omw_nightly.debug -a is.xyz.omw.debug.INFO
  * ```
  *
@@ -51,13 +55,24 @@ import ui.controls.GamepadEmulator
  * to the on-screen sticks' virtual device. Axis values are floats in
  * [-1; 1]; `keycode` is an Android keycode (96=A, 97=B, 98=X, 99=Y, 102=L2,
  * 103=R2, 108=start, 109=back, 19-22=dpad).
+ *
+ * JOY_PULSE holds an axis at `value` for `duration_ms` (release to 0 is
+ * scheduled on-device), so pulse timing carries no ADB latency jitter —
+ * calibrated camera turns stay reproducible.
+ *
+ * STATE asks the engine (see ControllerManager::androidDebugPoll in the
+ * OpenMW patch series) to log a [Android DebugState] line to openmw.log:
+ * player position/yaw/pitch, cell, GUI mode, the crosshair focus object,
+ * and — when `hint` is given — the nearest actor whose name matches the
+ * hint, with its bearing (degrees, relative to current yaw) and distance.
  */
 class DebugInputReceiver(private val engineReady: () -> Boolean) : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         when (val action = intent.action) {
             ACTION_INFO -> logDeviceInfo()
-            ACTION_JOY_AXIS, ACTION_JOY_STICK, ACTION_PAD_BUTTON -> {
+            ACTION_STATE -> requestEngineState(intent)
+            ACTION_JOY_AXIS, ACTION_JOY_STICK, ACTION_JOY_PULSE, ACTION_PAD_BUTTON -> {
                 if (!engineReady()) {
                     Log.i(TAG, "$action ignored: engine not running")
                     return
@@ -79,6 +94,17 @@ class DebugInputReceiver(private val engineReady: () -> Boolean) : BroadcastRece
                 if (axis >= 0) {
                     sendAxis(resolveDevice(intent), axis, value)
                     Log.i(TAG, "joy axis=$axis value=$value")
+                }
+            }
+            ACTION_JOY_PULSE -> {
+                val axis = intent.getIntExtra(EXTRA_AXIS, -1)
+                val value = intent.getFloatExtra(EXTRA_VALUE, 0f).coerceIn(-1f, 1f)
+                val durationMs = intent.getIntExtra(EXTRA_DURATION_MS, 0).coerceAtLeast(0)
+                if (axis >= 0 && durationMs > 0) {
+                    val device = resolveDevice(intent)
+                    sendAxis(device, axis, value)
+                    pulseHandler.postDelayed({ sendAxis(device, axis, 0f) }, durationMs.toLong())
+                    Log.i(TAG, "joy pulse axis=$axis value=$value ms=$durationMs")
                 }
             }
             ACTION_JOY_STICK -> {
@@ -144,12 +170,34 @@ class DebugInputReceiver(private val engineReady: () -> Boolean) : BroadcastRece
             "virtualRegistered=${GamepadEmulator.isRegistered}")
     }
 
+    // The engine answers asynchronously on its own thread: it logs one
+    // "[Android DebugState]" line to openmw.log (see
+    // ControllerManager::androidDebugPoll in the OpenMW patch series).
+    private fun requestEngineState(intent: Intent) {
+        if (!engineReady()) {
+            Log.i(TAG, "STATE ignored: engine not running")
+            return
+        }
+        try {
+            nativeDebugRequest(intent.getStringExtra(EXTRA_HINT) ?: "")
+            Log.i(TAG, "state requested")
+        } catch (e: Throwable) {
+            Log.e(TAG, "state request failed (engine lib loaded?)", e)
+        }
+    }
+
     companion object {
         private const val TAG = "OmwDebugInput"
+        private val pulseHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
+        @JvmStatic
+        private external fun nativeDebugRequest(hint: String)
 
         const val ACTION_JOY_AXIS = "is.xyz.omw.debug.JOY_AXIS"
         const val ACTION_JOY_STICK = "is.xyz.omw.debug.JOY_STICK"
+        const val ACTION_JOY_PULSE = "is.xyz.omw.debug.JOY_PULSE"
         const val ACTION_PAD_BUTTON = "is.xyz.omw.debug.PAD_BUTTON"
+        const val ACTION_STATE = "is.xyz.omw.debug.STATE"
         const val ACTION_INFO = "is.xyz.omw.debug.INFO"
 
         const val EXTRA_AXIS = "axis"
@@ -160,5 +208,7 @@ class DebugInputReceiver(private val engineReady: () -> Boolean) : BroadcastRece
         const val EXTRA_KEYCODE = "keycode"
         const val EXTRA_DOWN = "down"
         const val EXTRA_DEVICE = "device"
+        const val EXTRA_DURATION_MS = "duration_ms"
+        const val EXTRA_HINT = "hint"
     }
 }

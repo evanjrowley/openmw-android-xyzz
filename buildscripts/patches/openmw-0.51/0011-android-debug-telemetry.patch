@@ -1,0 +1,218 @@
+From 9df123f16fa84df335650aa9f87041125a23c7eb Mon Sep 17 00:00:00 2001
+From: ZCode <zcode@localhost>
+Date: Mon, 28 Sep 2026 19:20:55 -0400
+Subject: [PATCH] Android: ADB debug-state telemetry (player/aim/nearest-actor)
+
+Adds ControllerManager::androidDebugPoll (called from
+InputManager::update on the engine thread, before the
+disableControls early-out so chargen still answers): a JNI entry
+point (debug.DebugInputReceiver.nativeDebugRequest) records a
+request from a binder thread, and the next frame logs one
+[Android DebugState] line to openmw.log with player position,
+yaw/pitch, cell, GUI mode, the crosshair focus object, and the
+nearest actor matching an optional name hint (bearing relative to
+current yaw + distance). All engine access stays on the engine
+thread; the JNI side only sets an atomic flag.
+---
+ apps/openmw/mwinput/controllermanager.cpp | 144 ++++++++++++++++++++++
+ apps/openmw/mwinput/controllermanager.hpp |   8 ++
+ apps/openmw/mwinput/inputmanagerimp.cpp   |   4 +
+ 3 files changed, 156 insertions(+)
+
+diff --git a/apps/openmw/mwinput/controllermanager.cpp b/apps/openmw/mwinput/controllermanager.cpp
+index 591b0da460..a4beff5703 100644
+--- a/apps/openmw/mwinput/controllermanager.cpp
++++ b/apps/openmw/mwinput/controllermanager.cpp
+@@ -24,6 +24,29 @@
+ #include "bindingsmanager.hpp"
+ #include "mousemanager.hpp"
+ 
++// OPENMW_ANDROID_051_DEBUG_TELEMETRY: kept as a separate include group
++// after the original block so the earlier patches' hunks (which touch
++// that block) keep applying and reversing against this tree.
++#include <atomic>
++#include <cmath>
++#include <iomanip>
++#include <mutex>
++#include <sstream>
++#include <vector>
++
++#if defined(__ANDROID__)
++#include <jni.h>
++#endif
++
++#include <components/misc/strings/algorithm.hpp>
++#include <osg/Vec3f>
++
++#include "../mwbase/mechanicsmanager.hpp"
++#include "../mwbase/world.hpp"
++#include "../mwworld/cellstore.hpp"
++#include "../mwworld/class.hpp"
++#include "../mwworld/refdata.hpp"
++
+ namespace MWInput
+ {
+     ControllerManager::ControllerManager(BindingsManager* bindingsManager, MouseManager* mouseManager,
+@@ -642,4 +665,125 @@ namespace MWInput
+     {
+         MWBase::Environment::get().getLuaManager()->inputEvent({ MWBase::LuaManager::InputEvent::TouchReleased, arg });
+     }
++
++    // OPENMW_ANDROID_051_DEBUG_TELEMETRY: kept at end-of-file (rather than
++    // beside the constructor) so the earlier patches' hunks keep applying
++    // and reversing against this tree.
++    namespace
++    {
++        // ADB debug-state requests arrive on a binder thread (JNI) and are
++        // answered once per frame on the engine thread, so every engine
++        // access stays on the thread that owns it.
++        std::mutex sDebugHintMutex;
++        std::string sDebugHint;
++        std::atomic<bool> sDebugPending{ false };
++
++        // Generous search radius (game units) for the "nearest actor
++        // matching hint" report; the exact activation range is much smaller.
++        constexpr float sDebugNearestRadius = 4000.f;
++
++        float normalizeAngleDeg(float a)
++        {
++            while (a > 180.f)
++                a -= 360.f;
++            while (a < -180.f)
++                a += 360.f;
++            return a;
++        }
++    }
++
++#if defined(__ANDROID__)
++    extern "C" JNIEXPORT void JNICALL
++        Java_debug_DebugInputReceiver_nativeDebugRequest(JNIEnv* env, jclass, jstring hint)
++    {
++        const char* chars = hint ? env->GetStringUTFChars(hint, nullptr) : nullptr;
++        {
++            std::lock_guard<std::mutex> lock(sDebugHintMutex);
++            sDebugHint = chars ? chars : "";
++        }
++        if (chars)
++            env->ReleaseStringUTFChars(hint, chars);
++        sDebugPending.store(true, std::memory_order_release);
++    }
++#endif
++
++    void ControllerManager::androidDebugPoll()
++    {
++        if (!sDebugPending.exchange(false))
++            return;
++
++        MWBase::World* world = MWBase::Environment::get().getWorld();
++        const MWWorld::Ptr player = world->getPlayerPtr();
++        const ESM::Position& pos = player.getRefData().getPosition();
++        const MWBase::WindowManager* winMgr = MWBase::Environment::get().getWindowManager();
++
++        std::ostringstream out;
++        out << std::fixed << std::setprecision(1)
++            << "pos=" << pos.pos[0] << ',' << pos.pos[1] << ',' << pos.pos[2]
++            << std::setprecision(2)
++            << " yaw=" << pos.rot[2] * 57.2957795f
++            << " pitch=" << pos.rot[0] * 57.2957795f
++            << " cell='" << player.getCell()->getCell()->getDescription() << "'"
++            << " gui=" << (winMgr->isGuiMode() ? static_cast<int>(winMgr->getMode()) : -1);
++
++        const MWWorld::Ptr focus = world->getFocusObject();
++        if (!focus.isEmpty())
++        {
++            const float* fp = focus.getRefData().getPosition().pos;
++            const float dx = fp[0] - pos.pos[0];
++            const float dy = fp[1] - pos.pos[1];
++            const float dz = fp[2] - pos.pos[2];
++            out << std::setprecision(1)
++                << " faced='" << focus.getClass().getName(focus) << "'"
++                << " fdist=" << std::sqrt(dx * dx + dy * dy + dz * dz);
++        }
++        else
++            out << " faced=none fdist=-1";
++
++        std::string hint;
++        {
++            std::lock_guard<std::mutex> lock(sDebugHintMutex);
++            hint = sDebugHint;
++        }
++        if (!hint.empty())
++        {
++            std::vector<MWWorld::Ptr> actors;
++            MWBase::Environment::get().getMechanicsManager()->getActorsInRange(
++                osg::Vec3f(pos.pos[0], pos.pos[1], pos.pos[2]), sDebugNearestRadius, actors);
++            const MWWorld::Ptr* best = nullptr;
++            float bestDist = 0.f;
++            const std::string needle = Misc::StringUtils::lowerCase(hint);
++            for (const MWWorld::Ptr& actor : actors)
++            {
++                if (actor == player || actor.isEmpty())
++                    continue;
++                if (Misc::StringUtils::lowerCase(std::string(actor.getClass().getName(actor))).find(needle)
++                    == std::string::npos)
++                    continue;
++                const float* ap = actor.getRefData().getPosition().pos;
++                const float dx = ap[0] - pos.pos[0];
++                const float dy = ap[1] - pos.pos[1];
++                const float d = std::sqrt(dx * dx + dy * dy);
++                if (best == nullptr || d < bestDist)
++                {
++                    best = &actor;
++                    bestDist = d;
++                }
++            }
++            if (best != nullptr)
++            {
++                const float* ap = best->getRefData().getPosition().pos;
++                const float bearing = normalizeAngleDeg(
++                    std::atan2(ap[0] - pos.pos[0], ap[1] - pos.pos[1]) * 57.2957795f
++                    - pos.rot[2] * 57.2957795f);
++                out << std::setprecision(1)
++                    << " target='" << best->getClass().getName(*best) << "'"
++                    << " tbearing=" << bearing << " tdist=" << bestDist;
++            }
++            else
++                out << " target=none tdist=-1";
++        }
++
++        Log(Debug::Info) << "[Android DebugState] " << out.str();
++    }
+ }
+diff --git a/apps/openmw/mwinput/controllermanager.hpp b/apps/openmw/mwinput/controllermanager.hpp
+index 6540ecd374..17d2e37078 100644
+--- a/apps/openmw/mwinput/controllermanager.hpp
++++ b/apps/openmw/mwinput/controllermanager.hpp
+@@ -24,6 +24,14 @@ namespace MWInput
+ 
+         void update(float dt);
+ 
++        // OPENMW_ANDROID_051_DEBUG_TELEMETRY
++        // Answer a pending ADB debug-state request (see DebugInputReceiver.kt
++        // ACTION_STATE): logs player position/rotation, cell, GUI mode, the
++        // crosshair focus object, and the nearest actor matching the request
++        // hint (with bearing/distance) to openmw.log. Must be called once per
++        // frame from the engine thread; the request itself is thread-safe.
++        void androidDebugPoll();
++
+         void buttonPressed(int deviceID, const SDL_ControllerButtonEvent& arg) override;
+         void buttonReleased(int deviceID, const SDL_ControllerButtonEvent& arg) override;
+         void axisMoved(int deviceID, const SDL_ControllerAxisEvent& arg) override;
+diff --git a/apps/openmw/mwinput/inputmanagerimp.cpp b/apps/openmw/mwinput/inputmanagerimp.cpp
+index fa24130364..125349e323 100644
+--- a/apps/openmw/mwinput/inputmanagerimp.cpp
++++ b/apps/openmw/mwinput/inputmanagerimp.cpp
+@@ -62,6 +62,10 @@ namespace MWInput
+         mInputWrapper->setMouseVisible(MWBase::Environment::get().getWindowManager()->getCursorVisible());
+         mInputWrapper->capture(disableEvents);
+ 
++        // OPENMW_ANDROID_051_DEBUG_TELEMETRY: answer ADB debug-state
++        // requests even while controls are disabled (chargen etc.).
++        mControllerManager->androidDebugPoll();
++
+         if (disableControls)
+         {
+             mMouseManager->updateCursorMode();
+-- 
+2.54.0
+

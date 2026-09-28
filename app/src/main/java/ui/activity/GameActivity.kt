@@ -156,7 +156,9 @@ class GameActivity : SDLActivity() {
         val filter = IntentFilter().apply {
             addAction(DebugInputReceiver.ACTION_JOY_AXIS)
             addAction(DebugInputReceiver.ACTION_JOY_STICK)
+            addAction(DebugInputReceiver.ACTION_JOY_PULSE)
             addAction(DebugInputReceiver.ACTION_PAD_BUTTON)
+            addAction(DebugInputReceiver.ACTION_STATE)
             addAction(DebugInputReceiver.ACTION_INFO)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
