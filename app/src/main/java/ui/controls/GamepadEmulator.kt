@@ -23,25 +23,47 @@ import org.libsdl.app.SDLControllerManager
 
 internal object GamepadEmulator {
 
+    // random device ID to make sure it doesn't conflict with anything
+    internal const val VIRTUAL_DEVICE_ID = 1384510555
+
     private var registered = false
 
+    internal val isRegistered: Boolean
+        get() = registered
+
+    private fun ensureRegistered() {
+        // Registering before the joystick subsystem is up would set the flag
+        // while SDL drops the device, leaving the touch sticks dead for the
+        // whole session. pollInputDevices() only runs once SDL is ready.
+        if (registered || !SDLControllerManager.joystickSubsystemReady) return
+        registered = true
+        SDLControllerManager.nativeAddJoystick(VIRTUAL_DEVICE_ID, "Virtual", "Virtual",
+            0xbad, 0xf00d,
+            false, -0x1,
+            // axis_mask = LEFTX|LEFTY: SDL's Android auto-mapping only adds
+            // leftx/lefty bindings for axis-mask bits, so without this the
+            // virtual stick axes are unbound and the stick does nothing.
+            4, 0x0003, 0, 0)
+    }
+
     fun updateStick(stickId: Int, x: Float, y: Float) {
-        // random device ID to make sure it doesn't conflict with anything
-        val deviceId = 1384510555
+        ensureRegistered()
+        SDLControllerManager.onNativeJoy(VIRTUAL_DEVICE_ID, stickId * 2, x)
+        SDLControllerManager.onNativeJoy(VIRTUAL_DEVICE_ID, stickId * 2 + 1, y)
+    }
 
-        if (!registered) {
-            registered = true
-            SDLControllerManager.nativeAddJoystick(deviceId, "Virtual", "Virtual",
-                0xbad, 0xf00d,
-                false, -0x1,
-                // axis_mask = LEFTX|LEFTY: SDL's Android auto-mapping only adds
-                // leftx/lefty bindings for axis-mask bits, so without this the
-                // virtual stick axes are unbound and the stick does nothing.
-                4, 0x0003, 0, 0)
+    fun sendAxis(axis: Int, value: Float) {
+        ensureRegistered()
+        SDLControllerManager.onNativeJoy(VIRTUAL_DEVICE_ID, axis, value)
+    }
+
+    fun sendButton(keycode: Int, down: Boolean) {
+        ensureRegistered()
+        if (down) {
+            SDLControllerManager.onNativePadDown(VIRTUAL_DEVICE_ID, keycode)
+        } else {
+            SDLControllerManager.onNativePadUp(VIRTUAL_DEVICE_ID, keycode)
         }
-
-        SDLControllerManager.onNativeJoy(deviceId, stickId * 2, x)
-        SDLControllerManager.onNativeJoy(deviceId, stickId * 2 + 1, y)
     }
 
 }

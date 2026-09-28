@@ -20,7 +20,11 @@
 
 package ui.activity
 
+import android.content.Context
+import android.content.IntentFilter
 import android.content.SharedPreferences
+import android.content.pm.ApplicationInfo
+import android.os.Build
 import android.os.Bundle
 import android.os.Process
 import android.preference.PreferenceManager
@@ -31,7 +35,9 @@ import android.view.WindowManager
 import android.widget.RelativeLayout
 import com.libopenmw.openmw.R
 
+import debug.DebugInputReceiver
 import org.libsdl.app.SDLActivity
+import org.libsdl.app.SDLControllerManager
 
 import constants.Constants
 import cursor.MouseCursor
@@ -62,6 +68,7 @@ enum class MouseMode {
 class GameActivity : SDLActivity() {
 
     private var prefs: SharedPreferences? = null
+    private var debugInputReceiver: DebugInputReceiver? = null
 
     val layout: RelativeLayout
         get() = SDLActivity.mLayout as RelativeLayout
@@ -136,6 +143,27 @@ class GameActivity : SDLActivity() {
         KeepScreenOn()
         getPathToJni(filesDir.parent, Constants.USER_FILE_STORAGE)
         showControls()
+        registerDebugInputReceiver()
+    }
+
+    // Debug builds only: lets ADB inject real controller events into SDL
+    // while the game runs (see DebugInputReceiver for the actions).
+    private fun registerDebugInputReceiver() {
+        if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE == 0) return
+        debugInputReceiver = DebugInputReceiver {
+            mSDLThread != null && SDLControllerManager.joystickSubsystemReady
+        }
+        val filter = IntentFilter().apply {
+            addAction(DebugInputReceiver.ACTION_JOY_AXIS)
+            addAction(DebugInputReceiver.ACTION_JOY_STICK)
+            addAction(DebugInputReceiver.ACTION_PAD_BUTTON)
+            addAction(DebugInputReceiver.ACTION_INFO)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(debugInputReceiver, filter, Context.RECEIVER_EXPORTED)
+        } else {
+            registerReceiver(debugInputReceiver, filter)
+        }
     }
 
     private fun showControls() {
@@ -162,6 +190,12 @@ class GameActivity : SDLActivity() {
     }
 
     public override fun onDestroy() {
+        debugInputReceiver?.let {
+            try {
+                unregisterReceiver(it)
+            } catch (_: IllegalArgumentException) {
+            }
+        }
         finish()
         Process.killProcess(Process.myPid())
         super.onDestroy()

@@ -63,10 +63,17 @@ public class SDLControllerManager
         return mJoystickHandler.handleMotionEvent(event);
     }
 
+    // Set once the native side has polled input devices, which only happens
+    // after the SDL joystick subsystem is initialized. Injection paths (the
+    // debug input receiver, touch stick emulation) gate on this: a joystick
+    // registered before initialization would be silently dropped by SDL.
+    public static volatile boolean joystickSubsystemReady = false;
+
     /**
      * This method is called by SDL using JNI.
      */
     public static void pollInputDevices() {
+        joystickSubsystemReady = true;
         mJoystickHandler.pollInputDevices();
     }
 
