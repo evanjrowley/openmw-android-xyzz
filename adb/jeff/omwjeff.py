@@ -50,6 +50,45 @@ def bc(action, *extras):
         ">/dev/null", "2>&1")
 
 
+def servo_count():
+    """Number of finished [Android DebugServo] log lines so far."""
+    n = adb("shell", f"grep -c 'DebugServo' {LOG} 2>/dev/null || true").strip()
+    return int(n) if n.isdigit() else 0
+
+
+def servo_wait(mark, timeout_s):
+    """Block until a servo started after `mark` logs its done line."""
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        if servo_count() > mark:
+            return True
+        time.sleep(0.2)
+    return False
+
+
+def servo(kind, extra=(), wait_s=0.0):
+    """Start an engine-side primitive (turn/face/walk) and wait for it.
+
+    The engine runs a closed loop at frame rate (deadzone-safe minimum
+    drive, blocked-stop for walk), so one broadcast covers a whole
+    maneuver without ADB round-trip jitter. Falls back to nothing on
+    builds without patch 0012 — the broadcast is simply ignored.
+    """
+    mark = servo_count()
+    bc("is.xyz.omw.debug.SERVO", "--es", "kind", kind, *extra)
+    if wait_s:
+        servo_wait(mark, wait_s)
+
+
+def joy_state(duration_ms, x=0.0, y=0.0, rx=0.0, ry=0.0, lt=0.0, rt=0.0):
+    """Hold all six axes for duration_ms; release happens on-device."""
+    bc("is.xyz.omw.debug.JOY_STATE",
+       "--ef", "x", f"{x}", "--ef", "y", f"{y}",
+       "--ef", "rx", f"{rx}", "--ef", "ry", f"{ry}",
+       "--ef", "lt", f"{lt}", "--ef", "rt", f"{rt}",
+       "--ei", "duration_ms", str(duration_ms))
+
+
 def screencap(width):
     """Device frame as a base64 JPEG data URL, plus a local PIL copy."""
     png = adb("exec-out", "screencap", "-p", binary=True)
@@ -119,24 +158,17 @@ TURN_RATE = 0.0876  # degrees per ms at full stick deflection (measured)
 def proportional_turn(bearing):
     """Turn toward `bearing` (deg relative to current yaw).
 
-    Preferred path: the engine-side SERVO primitive (patch 0012) — a closed
-    look loop at frame rate that finishes aligned within ~1.5°. Falls back
-    to host-side proportional pulses on older builds (no DebugServo log).
+    SERVO turn is a frame-rate closed loop on the engine (aligned within
+    ~1.5° of the requested heading, deadzone-safe minimum drive). If no
+    done line appears (pre-0012 engine), fall back to a timed pulse.
     """
-    ms = int(min(1500, max(150, abs(bearing) / TURN_RATE)))
-    axis_val = "1.0" if bearing > 0 else "-1.0"
-    mark = adb("shell",
-               f"grep -c 'DebugServo' {LOG} 2>/dev/null || true").strip()
+    mark = servo_count()
     bc("is.xyz.omw.debug.SERVO", "--es", "kind", "turn", "--ef", "deg",
        f"{bearing:.1f}")
-    for _ in range(40):  # servo logs done=aligned/blocked/timeout when finished
-        time.sleep(0.25)
-        n = adb("shell",
-                f"grep -c 'DebugServo' {LOG} 2>/dev/null || true").strip()
-        if n.isdigit() and int(n) > (int(mark) if mark.isdigit() else 0):
-            return
-    bc("is.xyz.omw.debug.JOY_PULSE", "--ei", "axis", "2", "--ef", "value",
-       axis_val, "--ei", "duration_ms", str(ms))
+    if not servo_wait(mark, 8.0):
+        ms = int(min(1500, max(150, abs(bearing) / TURN_RATE)))
+        bc("is.xyz.omw.debug.JOY_PULSE", "--ei", "axis", "2", "--ef", "value",
+           "1.0" if bearing > 0 else "-1.0", "--ei", "duration_ms", str(ms))
 
 # ---------------------------------------------------------------- Jeff layer
 
@@ -186,16 +218,20 @@ MENU_ACTIONS = {
 }
 
 ACT = {
-    "forward": lambda: bc("is.xyz.omw.debug.JOY_PULSE", "--ei", "axis", "1", "--ef", "value", "-1.0", "--ei", "duration_ms", "1000"),
-    "back": lambda: bc("is.xyz.omw.debug.JOY_PULSE", "--ei", "axis", "1", "--ef", "value", "1.0", "--ei", "duration_ms", "600"),
-    "strafe_left": lambda: bc("is.xyz.omw.debug.JOY_PULSE", "--ei", "axis", "0", "--ef", "value", "-1.0", "--ei", "duration_ms", "600"),
-    "strafe_right": lambda: bc("is.xyz.omw.debug.JOY_PULSE", "--ei", "axis", "0", "--ef", "value", "1.0", "--ei", "duration_ms", "600"),
-    "turn_left": lambda: bc("is.xyz.omw.debug.JOY_PULSE", "--ei", "axis", "2", "--ef", "value", "-1.0", "--ei", "duration_ms", "800"),
-    "turn_right": lambda: bc("is.xyz.omw.debug.JOY_PULSE", "--ei", "axis", "2", "--ef", "value", "1.0", "--ei", "duration_ms", "800"),
+    # Translation and rotation run on the engine's per-frame primitives
+    # (SERVO / JOY_STATE, patch 0012): on-device release, blocked-stop for
+    # walking, aligned-deadband for turns. Only the trigger crossings
+    # (activate/attack) remain plain pulses.
+    "forward": lambda: servo("walk", ("--ei", "duration_ms", "700"), wait_s=4.0),
+    "back": lambda: joy_state(500, y=1.0) or time.sleep(0.7),
+    "strafe_left": lambda: joy_state(500, x=-1.0) or time.sleep(0.7),
+    "strafe_right": lambda: joy_state(500, x=1.0) or time.sleep(0.7),
+    "turn_left": lambda: servo("turn", ("--ef", "deg", "-70"), wait_s=6.0),
+    "turn_right": lambda: servo("turn", ("--ef", "deg", "70"), wait_s=6.0),
+    "look_up": lambda: joy_state(250, ry=-1.0) or time.sleep(0.5),
+    "look_down": lambda: joy_state(250, ry=1.0) or time.sleep(0.5),
     "activate": lambda: bc("is.xyz.omw.debug.JOY_PULSE", "--ei", "axis", "4", "--ef", "value", "1.0", "--ei", "duration_ms", "350"),
     "attack": lambda: bc("is.xyz.omw.debug.JOY_PULSE", "--ei", "axis", "5", "--ef", "value", "1.0", "--ei", "duration_ms", "350"),
-    "look_up": lambda: bc("is.xyz.omw.debug.JOY_PULSE", "--ei", "axis", "3", "--ef", "value", "-1.0", "--ei", "duration_ms", "300"),
-    "look_down": lambda: bc("is.xyz.omw.debug.JOY_PULSE", "--ei", "axis", "3", "--ef", "value", "1.0", "--ei", "duration_ms", "300"),
     "wait": lambda: time.sleep(0.5),
 }
 for _btn, _key in (("dpad_up", 19), ("dpad_down", 20), ("dpad_left", 21),
@@ -377,9 +413,16 @@ def main():
         result = ""
         if not args.observe_only:
             if pick == "steer":
-                _, tbear, _ = parse_target(telem)
-                proportional_turn(tbear or 0.0)
-                pick = f"steer({tbear:.0f}deg)" if tbear is not None else "steer"
+                # Engine-side alignment: face resolves the hinted target on
+                # the engine thread (fresher than the polled tbearing);
+                # without a hint, turn by the polled relative bearing.
+                tname2, tbear, _ = parse_target(telem)
+                if tname2:
+                    servo("face", ("--es", "hint", tname2), wait_s=8.0)
+                    pick = f"face({tname2})"
+                else:
+                    proportional_turn(tbear or 0.0)
+                    pick = f"turn({tbear:.0f}deg)"
             else:
                 ACT.get(pick, ACT["wait"])()
             time.sleep(args.sleep)

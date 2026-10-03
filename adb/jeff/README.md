@@ -31,11 +31,16 @@ What actually worked over five iterations of live runs:
    the run descended two levels into a corner. Vision quality bounds this
    loop — outdoor/daylight and lit interiors are its element.
 4. **Hinted-target steering**: with `--hint Caius` the telemetry carries
-   `target=<name> tbearing=<deg> tdist=<units>`; the code then swings the
-   camera proportionally (measured look rate ≈ 0.0876 °/ms at full
-   deflection), walks when aligned, and **Jeff gates the activation**
+   `target=<name> tbearing=<deg> tdist=<units>`; the code then runs the
+   engine-side `SERVO face <hint>` primitive (a frame-rate closed look
+   loop that finishes aligned within ~1.5°), walks with `SERVO walk`
+   (stops itself when blocked), and **Jeff gates the activation**
    (scene==npc). This took Caius from "six blind activation attempts" to a
-   hands-free steer → walk → activate → dialog-open sequence.
+   hands-free steer → walk → activate → dialog-open sequence. Since patch
+   0012 the entire steering path lives on the engine: forward/turn are
+   SERVO primitives, back/strafe/look are JOY_STATE on-device holds
+   (verified: walks of 150-220 units per tick vs ~50 with raw pulses);
+   only the activate/attack trigger crossings remain plain pulses.
 
 When a menu/dialog is open (telemetry `gui != -1`) the loop switches to a
 menu action set (dpad/A/B/Y) and Jeff picks those directly — it drove the
