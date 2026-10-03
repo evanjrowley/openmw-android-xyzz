@@ -72,7 +72,8 @@ class DebugInputReceiver(private val engineReady: () -> Boolean) : BroadcastRece
         when (val action = intent.action) {
             ACTION_INFO -> logDeviceInfo()
             ACTION_STATE -> requestEngineState(intent)
-            ACTION_JOY_AXIS, ACTION_JOY_STICK, ACTION_JOY_PULSE, ACTION_PAD_BUTTON -> {
+            ACTION_JOY_AXIS, ACTION_JOY_STICK, ACTION_JOY_PULSE, ACTION_PAD_BUTTON,
+            ACTION_JOY_STATE, ACTION_SERVO, ACTION_STREAM, ACTION_LOAD_SAVE -> {
                 if (!engineReady()) {
                     Log.i(TAG, "$action ignored: engine not running")
                     return
@@ -136,6 +137,42 @@ class DebugInputReceiver(private val engineReady: () -> Boolean) : BroadcastRece
                         "(${KeyEvent.keyCodeToString(keycode)}) device=$device")
                 }
             }
+            ACTION_JOY_STATE -> {
+                val durationMs = intent.getIntExtra(EXTRA_DURATION_MS, 0).coerceAtLeast(0)
+                nativeJoyState(
+                    intent.getFloatExtra(EXTRA_X, 0f),
+                    intent.getFloatExtra(EXTRA_Y, 0f),
+                    intent.getFloatExtra(EXTRA_RX, 0f),
+                    intent.getFloatExtra(EXTRA_RY, 0f),
+                    intent.getFloatExtra(EXTRA_LT, 0f),
+                    intent.getFloatExtra(EXTRA_RT, 0f),
+                    durationMs)
+                Log.i(TAG, "joy state ms=$durationMs")
+            }
+            ACTION_SERVO -> {
+                val kind = intent.getStringExtra(EXTRA_KIND) ?: "cancel"
+                when (kind) {
+                    "cancel" -> nativeServoCancel()
+                    "turn" -> nativeServo(1, intent.getFloatExtra(EXTRA_DEG, 0f), 0, "")
+                    "face" -> nativeServo(2, 0f, 0, intent.getStringExtra(EXTRA_HINT) ?: "")
+                    "walk" -> nativeServo(3, 0f,
+                        intent.getIntExtra(EXTRA_DURATION_MS, 2000).coerceAtLeast(0), "")
+                    else -> Log.w(TAG, "unknown servo kind=$kind")
+                }
+                Log.i(TAG, "servo kind=$kind")
+            }
+            ACTION_STREAM -> {
+                val period = intent.getIntExtra(EXTRA_PERIOD, 0).coerceAtLeast(0)
+                nativeStream(period)
+                Log.i(TAG, "stream period=$period")
+            }
+            ACTION_LOAD_SAVE -> {
+                val path = intent.getStringExtra(EXTRA_PATH) ?: ""
+                if (path.isNotEmpty()) {
+                    nativeLoadSave(path)
+                    Log.i(TAG, "load save path=$path")
+                }
+            }
         }
     }
 
@@ -171,18 +208,27 @@ class DebugInputReceiver(private val engineReady: () -> Boolean) : BroadcastRece
     }
 
     // The engine answers asynchronously on its own thread: it logs one
-    // "[Android DebugState]" line to openmw.log (see
-    // ControllerManager::androidDebugPoll in the OpenMW patch series).
+    // "[Android DebugState]" line to openmw.log. Both entry points are
+    // fired: the legacy 0011 poll (works even while controls are disabled)
+    // and the 0012 census/servo tick (superset line, game view only) —
+    // whichever runs last in a frame writes the richer line the harness
+    // reads with `tail -1`.
     private fun requestEngineState(intent: Intent) {
         if (!engineReady()) {
             Log.i(TAG, "STATE ignored: engine not running")
             return
         }
+        val hint = intent.getStringExtra(EXTRA_HINT) ?: ""
         try {
-            nativeDebugRequest(intent.getStringExtra(EXTRA_HINT) ?: "")
+            nativeDebugRequest(hint)
+        } catch (e: Throwable) {
+            Log.e(TAG, "legacy state request failed", e)
+        }
+        try {
+            nativeDebugState2(hint)
             Log.i(TAG, "state requested")
         } catch (e: Throwable) {
-            Log.e(TAG, "state request failed (engine lib loaded?)", e)
+            Log.e(TAG, "state v2 request failed (old engine build?)", e)
         }
     }
 
@@ -193,10 +239,33 @@ class DebugInputReceiver(private val engineReady: () -> Boolean) : BroadcastRece
         @JvmStatic
         private external fun nativeDebugRequest(hint: String)
 
+        @JvmStatic
+        private external fun nativeDebugState2(hint: String)
+
+        @JvmStatic
+        private external fun nativeServo(kind: Int, deg: Float, ms: Int, hint: String)
+
+        @JvmStatic
+        private external fun nativeServoCancel()
+
+        @JvmStatic
+        private external fun nativeStream(periodFrames: Int)
+
+        @JvmStatic
+        private external fun nativeLoadSave(path: String)
+
+        @JvmStatic
+        private external fun nativeJoyState(x0: Float, y0: Float, rx: Float, ry: Float,
+            lt: Float, rt: Float, durationMs: Int)
+
         const val ACTION_JOY_AXIS = "is.xyz.omw.debug.JOY_AXIS"
         const val ACTION_JOY_STICK = "is.xyz.omw.debug.JOY_STICK"
         const val ACTION_JOY_PULSE = "is.xyz.omw.debug.JOY_PULSE"
+        const val ACTION_JOY_STATE = "is.xyz.omw.debug.JOY_STATE"
         const val ACTION_PAD_BUTTON = "is.xyz.omw.debug.PAD_BUTTON"
+        const val ACTION_SERVO = "is.xyz.omw.debug.SERVO"
+        const val ACTION_STREAM = "is.xyz.omw.debug.STREAM"
+        const val ACTION_LOAD_SAVE = "is.xyz.omw.debug.LOAD_SAVE"
         const val ACTION_STATE = "is.xyz.omw.debug.STATE"
         const val ACTION_INFO = "is.xyz.omw.debug.INFO"
 
@@ -205,10 +274,18 @@ class DebugInputReceiver(private val engineReady: () -> Boolean) : BroadcastRece
         const val EXTRA_STICK = "stick"
         const val EXTRA_X = "x"
         const val EXTRA_Y = "y"
+        const val EXTRA_RX = "rx"
+        const val EXTRA_RY = "ry"
+        const val EXTRA_LT = "lt"
+        const val EXTRA_RT = "rt"
         const val EXTRA_KEYCODE = "keycode"
         const val EXTRA_DOWN = "down"
         const val EXTRA_DEVICE = "device"
         const val EXTRA_DURATION_MS = "duration_ms"
         const val EXTRA_HINT = "hint"
+        const val EXTRA_KIND = "kind"
+        const val EXTRA_DEG = "deg"
+        const val EXTRA_PERIOD = "period"
+        const val EXTRA_PATH = "path"
     }
 }

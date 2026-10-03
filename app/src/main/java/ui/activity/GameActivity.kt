@@ -158,6 +158,10 @@ class GameActivity : SDLActivity() {
             addAction(DebugInputReceiver.ACTION_JOY_STICK)
             addAction(DebugInputReceiver.ACTION_JOY_PULSE)
             addAction(DebugInputReceiver.ACTION_PAD_BUTTON)
+            addAction(DebugInputReceiver.ACTION_JOY_STATE)
+            addAction(DebugInputReceiver.ACTION_SERVO)
+            addAction(DebugInputReceiver.ACTION_STREAM)
+            addAction(DebugInputReceiver.ACTION_LOAD_SAVE)
             addAction(DebugInputReceiver.ACTION_STATE)
             addAction(DebugInputReceiver.ACTION_INFO)
         }

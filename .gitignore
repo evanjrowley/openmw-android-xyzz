@@ -21,3 +21,4 @@ buildscripts/downloads/
 buildscripts/prefix/
 buildscripts/symbols/
 buildscripts/icu-host
+__pycache__/
