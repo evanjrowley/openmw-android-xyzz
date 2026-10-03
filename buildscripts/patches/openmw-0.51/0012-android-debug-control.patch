@@ -1,4 +1,4 @@
-From da14fcd182d1d94296187fc26cf22ef28bb5eff8 Mon Sep 17 00:00:00 2001
+From a71cc4f1388cb39bf11762757ce1734fe7210e3c Mon Sep 17 00:00:00 2001
 From: ZCode <zcode@localhost>
 Date: Fri, 2 Oct 2026 20:33:11 -0400
 Subject: [PATCH] Android: ADB debug control surface (census, servos, stream,
@@ -16,14 +16,16 @@ Patch 0012, all additive (earlier patches' hunks stay byte-identical):
   STATE answers from both the legacy poll and the new tick.
 ---
  apps/openmw/CMakeLists.txt                |   4 +-
- apps/openmw/mwinput/androiddebug.cpp      | 639 ++++++++++++++++++++++
- apps/openmw/mwinput/androiddebug.hpp      |  31 ++
+ apps/openmw/mwinput/androiddebug.cpp      | 661 ++++++++++++++++++++++
+ apps/openmw/mwinput/androiddebug.hpp      |  37 ++
+ apps/openmw/mwinput/controllermanager.cpp |   9 +
+ apps/openmw/mwinput/controllermanager.hpp |   4 +
  apps/openmw/mwinput/inputmanagerimp.cpp   |   9 +
  apps/openmw/mwrender/debugmarkers.cpp     | 142 +++++
  apps/openmw/mwrender/debugmarkers.hpp     |  33 ++
  apps/openmw/mwrender/renderingmanager.hpp |   4 +
  apps/openmw/mwworld/player.cpp            |  16 +
- 8 files changed, 876 insertions(+), 2 deletions(-)
+ 10 files changed, 917 insertions(+), 2 deletions(-)
  create mode 100644 apps/openmw/mwinput/androiddebug.cpp
  create mode 100644 apps/openmw/mwinput/androiddebug.hpp
  create mode 100644 apps/openmw/mwrender/debugmarkers.cpp
@@ -49,10 +51,10 @@ index 09243dcce6..b79d70510b 100644
  
 diff --git a/apps/openmw/mwinput/androiddebug.cpp b/apps/openmw/mwinput/androiddebug.cpp
 new file mode 100644
-index 0000000000..c06e8ebcdd
+index 0000000000..7b3c2ed1d3
 --- /dev/null
 +++ b/apps/openmw/mwinput/androiddebug.cpp
-@@ -0,0 +1,639 @@
+@@ -0,0 +1,661 @@
 +#include "androiddebug.hpp"
 +
 +#include "controllermanager.hpp"
@@ -448,6 +450,28 @@ index 0000000000..c06e8ebcdd
 +            return disabled;
 +        }
 +
++        bool episodeLoggingEnabled()
++        {
++            static const bool enabled = []
++            {
++                const char* v = std::getenv("OPENMW_DEBUG_EPISODE");
++                return v != nullptr && v[0] != '0';
++            }();
++            return enabled;
++        }
++
++        void noteInputAxis(int axis, float value)
++        {
++            if (episodeLoggingEnabled())
++                Log(Debug::Info) << "[Android DebugInput] ax " << axis << " " << value;
++        }
++
++        void noteInputButton(int button, bool down)
++        {
++            if (episodeLoggingEnabled())
++                Log(Debug::Info) << "[Android DebugInput] btn " << button << " " << (down ? 1 : 0);
++        }
++
 +        void tick(float dt, ControllerManager& controllerManager)
 +        {
 +            (void)dt;
@@ -694,10 +718,10 @@ index 0000000000..c06e8ebcdd
 +}
 diff --git a/apps/openmw/mwinput/androiddebug.hpp b/apps/openmw/mwinput/androiddebug.hpp
 new file mode 100644
-index 0000000000..f2e18bdfb7
+index 0000000000..82df0adf89
 --- /dev/null
 +++ b/apps/openmw/mwinput/androiddebug.hpp
-@@ -0,0 +1,31 @@
+@@ -0,0 +1,37 @@
 +#ifndef OPENMW_MWINPUT_ANDROIDDEBUG_HPP
 +#define OPENMW_MWINPUT_ANDROIDDEBUG_HPP
 +
@@ -722,6 +746,12 @@ index 0000000000..f2e18bdfb7
 +        // from Player::activate); surfaced as `act=` in the state line.
 +        void noteActivate(const std::string& outcome);
 +
++        // Episode logger (OPENMW_DEBUG_EPISODE=1): append one input line
++        // to openmw.log per controller event, for host-side capture.
++        void noteInputAxis(int axis, float value);
++        void noteInputButton(int button, bool down);
++        bool episodeLoggingEnabled();
++
 +        // True when OPENMW_DEBUG_NO_IDLECAM is set in the environment:
 +        // isIdle() stays false so the Lua idle-orbit camera never engages.
 +        bool idleCamDisabled();
@@ -729,6 +759,55 @@ index 0000000000..f2e18bdfb7
 +}
 +
 +#endif
+diff --git a/apps/openmw/mwinput/controllermanager.cpp b/apps/openmw/mwinput/controllermanager.cpp
+index a4beff5703..8eae86e2b1 100644
+--- a/apps/openmw/mwinput/controllermanager.cpp
++++ b/apps/openmw/mwinput/controllermanager.cpp
+@@ -153,6 +153,9 @@ namespace MWInput
+ 
+     void ControllerManager::buttonPressed(int deviceID, const SDL_ControllerButtonEvent& arg)
+     {
++        // OPENMW_ANDROID_051_DEBUG_CONTROL: episode input capture.
++        AndroidDebug::noteInputButton(arg.button, true);
++
+         if (!Settings::input().mEnableController || mBindingsManager->isDetectingBindingState())
+             return;
+ 
+@@ -198,6 +201,9 @@ namespace MWInput
+ 
+     void ControllerManager::buttonReleased(int deviceID, const SDL_ControllerButtonEvent& arg)
+     {
++        // OPENMW_ANDROID_051_DEBUG_CONTROL: episode input capture.
++        AndroidDebug::noteInputButton(arg.button, false);
++
+         if (mBindingsManager->isDetectingBindingState())
+         {
+             mBindingsManager->controllerButtonReleased(deviceID, arg);
+@@ -243,6 +249,9 @@ namespace MWInput
+ 
+     void ControllerManager::axisMoved(int deviceID, const SDL_ControllerAxisEvent& arg)
+     {
++        // OPENMW_ANDROID_051_DEBUG_CONTROL: episode input capture.
++        AndroidDebug::noteInputAxis(arg.axis, arg.value / 32767.f);
++
+         if (mBindingsManager->isDetectingBindingState())
+         {
+             mBindingsManager->controllerAxisMoved(deviceID, arg);
+diff --git a/apps/openmw/mwinput/controllermanager.hpp b/apps/openmw/mwinput/controllermanager.hpp
+index 17d2e37078..3d85128c36 100644
+--- a/apps/openmw/mwinput/controllermanager.hpp
++++ b/apps/openmw/mwinput/controllermanager.hpp
+@@ -8,6 +8,10 @@
+ #include <components/sdlutil/events.hpp>
+ #include <components/settings/settings.hpp>
+ 
++// OPENMW_ANDROID_051_DEBUG_CONTROL: noteInputAxis/noteInputButton
++// declarations (episode logger; implemented in androiddebug.cpp).
++#include "androiddebug.hpp"
++
+ namespace MWInput
+ {
+     class BindingsManager;
 diff --git a/apps/openmw/mwinput/inputmanagerimp.cpp b/apps/openmw/mwinput/inputmanagerimp.cpp
 index 125349e323..9044aabeca 100644
 --- a/apps/openmw/mwinput/inputmanagerimp.cpp

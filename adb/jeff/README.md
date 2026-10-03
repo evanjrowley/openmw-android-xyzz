@@ -68,6 +68,15 @@ Per-tick wall time is dominated by the Jeff server: ~10 s text-only,
 needs their GPU class). Image size (480-960 px) makes no difference to
 that cost, so frames are sent at 960 px.
 
+## Episode recording (adapter training data)
+
+`omwepisode.py` records a session into `episode-<ts>/`: periodic frames
++ STREAM telemetry + every controller event (`OPENMW_DEBUG_EPISODE=1`
+in the launcher env makes the engine log `[Android DebugInput]` lines),
+merged chronologically into episode.jsonl with a manifest. Play by hand
+or run omwjeff while it records; the rows are the aligned
+(frame, telemetry, action) data for training a Morrowind adapter.
+
 ## What Jeff was asked (request shape)
 
 POST `/v1/systemone` `{model, questions, images, state}` — unchanging
