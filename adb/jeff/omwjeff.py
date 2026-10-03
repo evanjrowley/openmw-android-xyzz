@@ -274,6 +274,33 @@ def norm_yaw(a):
     return a
 
 
+def wait_for_jeff(timeout_s=420):
+    """Wait until the Jeff server is up AND the model is warm.
+
+    The first query after a server (re)start loads the checkpoint —
+    minutes on CPU, ~60s on the CUDA host — so poll /health first and
+    then pay one throwaway decision before the loop starts.
+    """
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(JEFF_URL + "/health", timeout=10) as f:
+                if json.loads(f.read()).get("status") == "ready":
+                    break
+        except Exception:
+            pass
+        time.sleep(5)
+        continue
+    try:
+        t0 = time.time()
+        ask("warmup", {"ping": {"type": "noul"}})
+        print(f"jeff warm (first decision {time.time() - t0:.1f}s)", file=sys.stderr)
+        return True
+    except Exception as e:
+        print(f"jeff warmup decision failed: {e}", file=sys.stderr)
+        return False
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--task", required=True, help="high-level goal for every tick")
@@ -285,7 +312,19 @@ def main():
     ap.add_argument("--observe-only", action="store_true", help="screenshot+Jeff, no actuation")
     ap.add_argument("--frames", default="/tmp/omwjeff_frames", help="frame dump dir")
     ap.add_argument("--transcript", default="", help="JSONL transcript path")
+    ap.add_argument("--fast", action="store_true",
+                    help="for sub-second decision hardware: shorter walks "
+                         "(400ms) and 35-degree turns for vision-rate "
+                         "course correction")
     args = ap.parse_args()
+
+    if args.fast:
+        ACT["forward"] = lambda: servo("walk", ("--ei", "duration_ms", "400"), wait_s=3.0)
+        ACT["turn_left"] = lambda: servo("turn", ("--ef", "deg", "-35"), wait_s=6.0)
+        ACT["turn_right"] = lambda: servo("turn", ("--ef", "deg", "35"), wait_s=6.0)
+        GAME_ACTIONS["forward"] = "Walk straight ahead for about half a second"
+        GAME_ACTIONS["turn_left"] = "Rotate the view left by about 35 degrees"
+        GAME_ACTIONS["turn_right"] = "Rotate the view right by about 35 degrees"
 
     os.makedirs(args.frames, exist_ok=True)
     tr_path = args.transcript or f"/tmp/omwjeff-{time.strftime('%H%M%S')}.jsonl"
@@ -295,10 +334,8 @@ def main():
     landmarks = []    # (name, yaw, dist) — named objects the crosshair swept
     act_streak = 0    # consecutive activations that opened no dialog
 
-    try:
-        ask("warmup", {"ping": {"type": "noul"}})
-    except Exception as e:
-        print(f"jeff warmup failed: {e}", file=sys.stderr)
+    if not wait_for_jeff():
+        print("jeff not reachable; decisions will fail until it is", file=sys.stderr)
 
     for tick in range(args.ticks):
         # Neutral axis event: keeps the idle orbit camera from engaging

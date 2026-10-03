@@ -64,9 +64,13 @@ OMW_SERIAL=642264a2 nix-shell -p python312 python312Packages.pillow --run \
 - Every tick: transcript JSONL row + frame JPEG under `/tmp/omwjeff_frames/`.
 
 Per-tick wall time is dominated by the Jeff server: ~10 s text-only,
-~16-20 s with one image (measured 2026-10-02; the README's 22 ms figure
-needs their GPU class). Image size (480-960 px) makes no difference to
-that cost, so frames are sent at 960 px.
+~16-20 s with one image on the pre-migration CPU box (image size
+480-960 px makes no difference to that cost, so frames are sent at
+960 px). A CUDA-host migration is planned (first query ~60 s cold
+checkpoint load, then <1 s): point `JEFF_URL` at the new server, run
+`latency_probe.py`, and use `omwjeff --fast` (400 ms walks, 35° turns)
+once decisions are sub-second — omwjeff waits for a cold server via
+/health before its first tick.
 
 ## Episode recording (adapter training data)
 
