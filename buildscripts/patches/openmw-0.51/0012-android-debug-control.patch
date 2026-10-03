@@ -1,4 +1,4 @@
-From 1b253adbef976b70f0985fa946f2fe5dc8a935e7 Mon Sep 17 00:00:00 2001
+From ba26ca12b1e39ec5fa692d997bfc2c633d01ab30 Mon Sep 17 00:00:00 2001
 From: ZCode <zcode@localhost>
 Date: Fri, 2 Oct 2026 20:33:11 -0400
 Subject: [PATCH] Android: ADB debug control surface (census, servos, stream,
@@ -16,11 +16,11 @@ Patch 0012, all additive (earlier patches' hunks stay byte-identical):
   STATE answers from both the legacy poll and the new tick.
 ---
  apps/openmw/CMakeLists.txt              |   2 +-
- apps/openmw/mwinput/androiddebug.cpp    | 595 ++++++++++++++++++++++++
+ apps/openmw/mwinput/androiddebug.cpp    | 617 ++++++++++++++++++++++++
  apps/openmw/mwinput/androiddebug.hpp    |  31 ++
  apps/openmw/mwinput/inputmanagerimp.cpp |   9 +
  apps/openmw/mwworld/player.cpp          |  16 +
- 5 files changed, 652 insertions(+), 1 deletion(-)
+ 5 files changed, 674 insertions(+), 1 deletion(-)
  create mode 100644 apps/openmw/mwinput/androiddebug.cpp
  create mode 100644 apps/openmw/mwinput/androiddebug.hpp
 
@@ -39,10 +39,10 @@ index 09243dcce6..c5acc89cd5 100644
  
 diff --git a/apps/openmw/mwinput/androiddebug.cpp b/apps/openmw/mwinput/androiddebug.cpp
 new file mode 100644
-index 0000000000..28dd017885
+index 0000000000..9f0189898c
 --- /dev/null
 +++ b/apps/openmw/mwinput/androiddebug.cpp
-@@ -0,0 +1,595 @@
+@@ -0,0 +1,617 @@
 +#include "androiddebug.hpp"
 +
 +#include "controllermanager.hpp"
@@ -60,12 +60,15 @@ index 0000000000..28dd017885
 +#include "../mwworld/class.hpp"
 +#include "../mwworld/doorstate.hpp"
 +#include "../mwworld/refdata.hpp"
++#include "../mwgui/windowbase.hpp"
 +
 +#include <MyGUI_InputManager.h>
 +#include <MyGUI_TextBox.h>
 +#include <MyGUI_Widget.h>
 +#include <SDL_gamecontroller.h>
++#include <cxxabi.h>
 +#include <osg/Vec3f>
++#include <typeinfo>
 +
 +#include <algorithm>
 +#include <atomic>
@@ -256,6 +259,18 @@ index 0000000000..28dd017885
 +                return s;
 +            }
 +
++            std::string demangleTypeName(const char* name)
++            {
++                int status = 0;
++                if (char* real = abi::__cxa_demangle(name, nullptr, nullptr, &status))
++                {
++                    std::string out(real);
++                    free(real);
++                    return out;
++                }
++                return name;
++            }
++
 +            std::string menuDescription()
 +            {
 +                std::string out;
@@ -271,6 +286,13 @@ index 0000000000..28dd017885
 +                };
 +                addWidget(MyGUI::InputManager::getInstance().getKeyFocusWidget(), "kfocus");
 +                addWidget(MyGUI::InputManager::getInstance().getMouseFocusWidget(), "mfocus");
++                // The window the fork's gamepad dispatch routes controller
++                // events to (same accessor as [Android ControllerDispatch]);
++                // unlike MyGUI focus it is populated under gamepad nav.
++                if (auto* top = MWBase::Environment::get().getWindowManager()
++                        ->getActiveControllerWindow())
++                    out += " topWin='" + sanitize(demangleTypeName(typeid(*top).name()), 48) + "'"
++                        + " vis=" + (top->isVisible() ? "1" : "0");
 +                return out;
 +            }
 +
