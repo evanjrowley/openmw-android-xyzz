@@ -1,4 +1,4 @@
-From ba26ca12b1e39ec5fa692d997bfc2c633d01ab30 Mon Sep 17 00:00:00 2001
+From da14fcd182d1d94296187fc26cf22ef28bb5eff8 Mon Sep 17 00:00:00 2001
 From: ZCode <zcode@localhost>
 Date: Fri, 2 Oct 2026 20:33:11 -0400
 Subject: [PATCH] Android: ADB debug control surface (census, servos, stream,
@@ -15,20 +15,30 @@ Patch 0012, all additive (earlier patches' hunks stay byte-identical):
 - Kotlin DebugInputReceiver: SERVO/STREAM/LOAD_SAVE/JOY_STATE actions,
   STATE answers from both the legacy poll and the new tick.
 ---
- apps/openmw/CMakeLists.txt              |   2 +-
- apps/openmw/mwinput/androiddebug.cpp    | 617 ++++++++++++++++++++++++
- apps/openmw/mwinput/androiddebug.hpp    |  31 ++
- apps/openmw/mwinput/inputmanagerimp.cpp |   9 +
- apps/openmw/mwworld/player.cpp          |  16 +
- 5 files changed, 674 insertions(+), 1 deletion(-)
+ apps/openmw/CMakeLists.txt                |   4 +-
+ apps/openmw/mwinput/androiddebug.cpp      | 639 ++++++++++++++++++++++
+ apps/openmw/mwinput/androiddebug.hpp      |  31 ++
+ apps/openmw/mwinput/inputmanagerimp.cpp   |   9 +
+ apps/openmw/mwrender/debugmarkers.cpp     | 142 +++++
+ apps/openmw/mwrender/debugmarkers.hpp     |  33 ++
+ apps/openmw/mwrender/renderingmanager.hpp |   4 +
+ apps/openmw/mwworld/player.cpp            |  16 +
+ 8 files changed, 876 insertions(+), 2 deletions(-)
  create mode 100644 apps/openmw/mwinput/androiddebug.cpp
  create mode 100644 apps/openmw/mwinput/androiddebug.hpp
+ create mode 100644 apps/openmw/mwrender/debugmarkers.cpp
+ create mode 100644 apps/openmw/mwrender/debugmarkers.hpp
 
 diff --git a/apps/openmw/CMakeLists.txt b/apps/openmw/CMakeLists.txt
-index 09243dcce6..c5acc89cd5 100644
+index 09243dcce6..b79d70510b 100644
 --- a/apps/openmw/CMakeLists.txt
 +++ b/apps/openmw/CMakeLists.txt
-@@ -27,7 +27,7 @@ add_openmw_dir (mwrender
+@@ -23,11 +23,11 @@ add_openmw_dir (mwrender
+     bulletdebugdraw globalmap characterpreview camera localmap water terrainstorage ripplesimulation
+     renderbin actoranimation landmanager navmesh actorspaths recastmesh fogmanager objectpaging groundcover
+     postprocessor pingpongcull luminancecalculator pingpongcanvas transparentpass precipitationocclusion ripples
+-    actorutil distortion animationpriority bonegroup blendmask animblendcontroller
++    actorutil distortion animationpriority bonegroup blendmask animblendcontroller debugmarkers
      )
  
  add_openmw_dir (mwinput
@@ -39,10 +49,10 @@ index 09243dcce6..c5acc89cd5 100644
  
 diff --git a/apps/openmw/mwinput/androiddebug.cpp b/apps/openmw/mwinput/androiddebug.cpp
 new file mode 100644
-index 0000000000..9f0189898c
+index 0000000000..c06e8ebcdd
 --- /dev/null
 +++ b/apps/openmw/mwinput/androiddebug.cpp
-@@ -0,0 +1,617 @@
+@@ -0,0 +1,639 @@
 +#include "androiddebug.hpp"
 +
 +#include "controllermanager.hpp"
@@ -56,6 +66,9 @@ index 0000000000..9f0189898c
 +#include "../mwbase/statemanager.hpp"
 +#include "../mwbase/windowmanager.hpp"
 +#include "../mwbase/world.hpp"
++#include "../mwgui/windowbase.hpp"
++#include "../mwrender/debugmarkers.hpp"
++#include "../mwrender/renderingmanager.hpp"
 +#include "../mwworld/cellstore.hpp"
 +#include "../mwworld/class.hpp"
 +#include "../mwworld/doorstate.hpp"
@@ -77,6 +90,7 @@ index 0000000000..9f0189898c
 +#include <cstdlib>
 +#include <filesystem>
 +#include <iomanip>
++#include <memory>
 +#include <mutex>
 +#include <sstream>
 +#include <string>
@@ -438,6 +452,24 @@ index 0000000000..9f0189898c
 +        {
 +            (void)dt;
 +
++            // --- debug target markers (OPENMW_DEBUG_MARKERS=1) ---
++            // Only touch the world while a game is actually running: tick
++            // also fires on the title screen / loading screens.
++            if (MWBase::Environment::get().getStateManager()->getState()
++                    == MWBase::StateManager::State_Running
++                && std::getenv("OPENMW_DEBUG_MARKERS") != nullptr
++                && std::getenv("OPENMW_DEBUG_MARKERS")[0] != '0')
++            {
++                static std::unique_ptr<MWRender::DebugMarkers> sMarkers;
++                if (!sMarkers)
++                {
++                    if (auto* rm = MWBase::Environment::get().getWorld()->getRenderingManager())
++                        sMarkers = std::make_unique<MWRender::DebugMarkers>(rm->getRootNode());
++                }
++                if (sMarkers)
++                    sMarkers->update();
++            }
++
 +            // --- servo motors (synthetic axis events at frame rate) ---
 +            const int epoch = sServoCancelEpoch.load(std::memory_order_relaxed);
 +            if (sMode != Servo::Off && epoch != sCancelEpochSeen)
@@ -731,6 +763,208 @@ index 125349e323..9044aabeca 100644
          return mActionManager->getIdleTime() > 0.5;
      }
  
+diff --git a/apps/openmw/mwrender/debugmarkers.cpp b/apps/openmw/mwrender/debugmarkers.cpp
+new file mode 100644
+index 0000000000..c92dfb05c4
+--- /dev/null
++++ b/apps/openmw/mwrender/debugmarkers.cpp
+@@ -0,0 +1,142 @@
++#include "debugmarkers.hpp"
++
++#include "../mwbase/environment.hpp"
++#include "../mwbase/mechanicsmanager.hpp"
++#include "../mwbase/world.hpp"
++#include "../mwmechanics/creaturestats.hpp"
++#include "../mwworld/cellstore.hpp"
++#include "../mwworld/class.hpp"
++#include "../mwworld/refdata.hpp"
++
++#include <components/esm3/loadcont.hpp>
++#include <components/esm3/loaddoor.hpp>
++
++#include <osg/Depth>
++#include <osg/Geode>
++#include <osg/Group>
++#include <osg/MatrixTransform>
++#include <osg/ShapeDrawable>
++
++#include <chrono>
++#include <cmath>
++#include <memory>
++#include <vector>
++
++namespace MWRender
++{
++    namespace
++    {
++        constexpr double sUpdatePeriod = 0.5; // seconds between rebuilds
++        constexpr float sRadius = 1500.f;     // game units around the player
++        constexpr float sMarkerSize = 12.f;
++
++        osg::ref_ptr<osg::Depth> makeAlwaysDepth()
++        {
++            // X-ray: draw over the world so markers stay readable through
++            // walls (the whole point in dark interiors).
++            auto* depth = new osg::Depth(osg::Depth::ALWAYS, 0, 0, false);
++            depth->setWriteMask(false);
++            return depth;
++        }
++
++        void addMarker(osg::Group* group, osg::StateSet* sharedState,
++            const osg::Vec3f& pos, float radius, osg::Vec4f color)
++        {
++            auto* geode = new osg::Geode;
++            auto* drawable = new osg::ShapeDrawable(
++                new osg::Sphere(osg::Vec3f(0.f, 0.f, 0.f), radius));
++            // OpenMW's shader pipeline follows the drawable's vertex colors,
++            // not fixed-function materials — color the geometry itself.
++            drawable->setColor(color);
++            drawable->setStateSet(sharedState);
++            geode->addChild(drawable);
++            auto* xform = new osg::MatrixTransform(
++                osg::Matrix::translate(pos));
++            xform->addChild(geode);
++            group->addChild(xform);
++        }
++    }
++
++    DebugMarkers::DebugMarkers(osg::Group* root)
++        : mRoot(root)
++        , mGroup(new osg::Group)
++    {
++        mGroup->setName("android_debug_markers");
++        mRoot->addChild(mGroup);
++    }
++
++    DebugMarkers::~DebugMarkers()
++    {
++        if (mRoot.valid() && mGroup.valid())
++            mRoot->removeChild(mGroup);
++    }
++
++    void DebugMarkers::update()
++    {
++        const double now = std::chrono::duration<double>(
++            std::chrono::steady_clock::now().time_since_epoch())
++                               .count();
++        if (now - mLastUpdate < sUpdatePeriod)
++            return;
++        mLastUpdate = now;
++
++        const MWWorld::Ptr player = MWBase::Environment::get().getWorld()->getPlayerPtr();
++        if (player.isEmpty() || player.getCell() == nullptr
++            || player.getCell()->getCell() == nullptr)
++            return;
++        const ESM::Position& pos = player.getRefData().getPosition();
++        const osg::Vec3f origin(pos.pos[0], pos.pos[1], pos.pos[2]);
++
++        // Shared depth state is rebuilt with the group each cycle to keep
++        // the lifetime story trivial; colors go on the drawables themselves
++        // (OpenMW's shader pipeline follows vertex colors, not materials).
++        static osg::ref_ptr<osg::Depth> depth = makeAlwaysDepth();
++
++        auto makeState = [&]()
++        {
++            auto* state = new osg::StateSet;
++            state->setAttributeAndModes(depth, osg::StateAttribute::OVERRIDE);
++            state->setMode(GL_BLEND, osg::StateAttribute::ON | osg::StateAttribute::OVERRIDE);
++            return state;
++        };
++        static osg::ref_ptr<osg::StateSet> sharedState = makeState();
++
++        mGroup->removeChildren(0, mGroup->getNumChildren());
++
++        MWBase::World* world = MWBase::Environment::get().getWorld();
++
++        player.getCell()->forEachType<ESM::Door>([&](const MWWorld::Ptr& door)
++        {
++            const float* dp = door.getRefData().getPosition().pos;
++            const osg::Vec3f d(dp[0], dp[1], dp[2]);
++            if ((d - origin).length() <= sRadius)
++                addMarker(mGroup, sharedState, d + osg::Vec3f(0.f, 0.f, 64.f),
++                    sMarkerSize, osg::Vec4f(1.f, 0.55f, 0.f, 0.6f));
++            return true;
++        });
++
++        player.getCell()->forEachType<ESM::Container>([&](const MWWorld::Ptr& container)
++        {
++            const float* cp = container.getRefData().getPosition().pos;
++            const osg::Vec3f c(cp[0], cp[1], cp[2]);
++            if ((c - origin).length() <= sRadius)
++                addMarker(mGroup, sharedState, c + osg::Vec3f(0.f, 0.f, 48.f),
++                    sMarkerSize * 0.75f, osg::Vec4f(0.2f, 1.f, 0.3f, 0.6f));
++            return true;
++        });
++
++        std::vector<MWWorld::Ptr> actors;
++        MWBase::Environment::get().getMechanicsManager()->getActorsInRange(origin, sRadius, actors);
++        for (const MWWorld::Ptr& actor : actors)
++        {
++            if (actor == player || actor.isEmpty())
++                continue;
++            const auto& stats = actor.getClass().getCreatureStats(actor);
++            if (stats.isDead())
++                continue;
++            const float* ap = actor.getRefData().getPosition().pos;
++            addMarker(mGroup, sharedState, osg::Vec3f(ap[0], ap[1], ap[2] + 80.f),
++                sMarkerSize, osg::Vec4f(0.3f, 0.8f, 1.f, 0.6f));
++        }
++    }
++}
+diff --git a/apps/openmw/mwrender/debugmarkers.hpp b/apps/openmw/mwrender/debugmarkers.hpp
+new file mode 100644
+index 0000000000..993f09699e
+--- /dev/null
++++ b/apps/openmw/mwrender/debugmarkers.hpp
+@@ -0,0 +1,33 @@
++#ifndef OPENMW_MWRENDER_DEBUGMARKERS_HPP
++#define OPENMW_MWRENDER_DEBUGMARKERS_HPP
++
++#include <osg/ref_ptr>
++
++namespace osg
++{
++    class Group;
++}
++
++namespace MWRender
++{
++    // OPENMW_ANDROID_051_DEBUG_CONTROL: colored x-ray markers over nearby
++    // activatable objects (doors orange, containers green, live actors
++    // cyan) so a vision model can spot targets by color instead of
++    // recognizing Morrowind objects in dark frames. Enabled with
++    // OPENMW_DEBUG_MARKERS=1; rebuilt in place every update().
++    class DebugMarkers
++    {
++    public:
++        explicit DebugMarkers(osg::Group* root);
++        ~DebugMarkers();
++
++        void update();
++
++    private:
++        osg::ref_ptr<osg::Group> mRoot;
++        osg::ref_ptr<osg::Group> mGroup;
++        double mLastUpdate = 0.f;
++    };
++}
++
++#endif
+diff --git a/apps/openmw/mwrender/renderingmanager.hpp b/apps/openmw/mwrender/renderingmanager.hpp
+index 07f983c646..d592712737 100644
+--- a/apps/openmw/mwrender/renderingmanager.hpp
++++ b/apps/openmw/mwrender/renderingmanager.hpp
+@@ -116,6 +116,10 @@ namespace MWRender
+             SceneUtil::UnrefQueue& unrefQueue);
+         ~RenderingManager();
+ 
++        // OPENMW_ANDROID_051_DEBUG_CONTROL: scene root for the debug
++        // target-marker overlay (mwrender/debugmarkers).
++        osg::Group* getRootNode() { return mRootNode.get(); }
++
+         osgUtil::IncrementalCompileOperation* getIncrementalCompileOperation();
+ 
+         MWRender::Objects& getObjects() override;
 diff --git a/apps/openmw/mwworld/player.cpp b/apps/openmw/mwworld/player.cpp
 index 54b724773f..a9d74fc473 100644
 --- a/apps/openmw/mwworld/player.cpp
