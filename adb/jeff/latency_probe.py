@@ -19,7 +19,7 @@ import urllib.request
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from omwjeff import ask  # noqa: E402
 
-JEFF_URL = os.environ.get("JEFF_URL", "http://10.126.191.1:8765")
+JEFF_URL = os.environ.get("JEFF_URL", "http://10.126.193.1:8765")
 
 ACTIONS = {
     "forward": "Walk straight ahead for about half a second",

@@ -157,6 +157,7 @@ class DebugInputReceiver(private val engineReady: () -> Boolean) : BroadcastRece
                     "face" -> nativeServo(2, 0f, 0, intent.getStringExtra(EXTRA_HINT) ?: "")
                     "walk" -> nativeServo(3, 0f,
                         intent.getIntExtra(EXTRA_DURATION_MS, 2000).coerceAtLeast(0), "")
+                    "goto" -> nativeServo(4, 0f, 0, intent.getStringExtra(EXTRA_HINT) ?: "")
                     else -> Log.w(TAG, "unknown servo kind=$kind")
                 }
                 Log.i(TAG, "servo kind=$kind")

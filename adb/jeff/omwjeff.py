@@ -32,7 +32,7 @@ import urllib.request
 
 SERIAL = os.environ.get("OMW_SERIAL", "642264a2")
 PKG = os.environ.get("OMW_PKG", "is.xyz.omw_nightly.debug")
-JEFF_URL = os.environ.get("JEFF_URL", "http://10.126.191.1:8765")
+JEFF_URL = os.environ.get("JEFF_URL", "http://10.126.193.1:8765")
 MODEL = os.environ.get("JEFF_MODEL", "jeff-latest")
 LOG = os.environ.get("OMW_LOG", "/sdcard/omw_nightly/config/openmw.log")
 

@@ -1,7 +1,7 @@
 # Jeff-driven gamepad control loop
 
 `omwjeff.py` closes the loop between the [Jeff](https://github.com/firelex/jeff)
-System-1 model (`http://10.126.191.1:8765`) and the running debug build:
+System-1 model (`http://10.126.193.1:8765`) and the running debug build:
 each tick it screencaps the device, pulls one `[Android DebugState]`
 telemetry line (patch `0011-android-debug-telemetry`), asks Jeff a small set
 of questions about the frame, and executes the mapped gamepad action through
