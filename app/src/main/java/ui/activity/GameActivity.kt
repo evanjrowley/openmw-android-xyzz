@@ -111,6 +111,8 @@ class GameActivity : SDLActivity() {
         }
 
         val envline: String = PreferenceManager.getDefaultSharedPreferences(this).getString("envLine", "").toString()
+        if (PreferenceManager.getDefaultSharedPreferences(this).getBoolean("pref_telemetry", false))
+            Os.setenv("OPENMW_TELEM", "1", true)
         if (envline.length > 0) {
             val envs: List<String> = envline.split(" ", "\n")
             var i = 0
@@ -164,6 +166,7 @@ class GameActivity : SDLActivity() {
             addAction(DebugInputReceiver.ACTION_LOAD_SAVE)
             addAction(DebugInputReceiver.ACTION_ROUTE)
             addAction(DebugInputReceiver.ACTION_PROBE)
+            addAction(DebugInputReceiver.ACTION_TELEM)
             addAction(DebugInputReceiver.ACTION_STATE)
             addAction(DebugInputReceiver.ACTION_INFO)
         }

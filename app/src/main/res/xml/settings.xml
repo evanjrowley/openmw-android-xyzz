@@ -86,6 +86,14 @@
             android:title="@string/pref_screen_keeper"/>
     </PreferenceCategory>
 
+    <PreferenceCategory android:title="Model control (debug builds)">
+        <CheckBoxPreference
+            android:key="pref_telemetry"
+            android:title="Telemetry recording"
+            android:summary="Record controller input + world state on-device to /sdcard/omw_nightly/telemetry (one folder per session, capped at 200 MB total; oldest sessions removed first)."
+            android:defaultValue="false" />
+    </PreferenceCategory>
+
     <PreferenceCategory android:title="@string/category_performance">
         <ListPreference
             android:key="pref_physicsFPS2"

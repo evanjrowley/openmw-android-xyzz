@@ -73,7 +73,7 @@ class DebugInputReceiver(private val engineReady: () -> Boolean) : BroadcastRece
             ACTION_INFO -> logDeviceInfo()
             ACTION_STATE -> requestEngineState(intent)
             ACTION_JOY_AXIS, ACTION_JOY_STICK, ACTION_JOY_PULSE, ACTION_PAD_BUTTON,
-            ACTION_JOY_STATE, ACTION_SERVO, ACTION_STREAM, ACTION_LOAD_SAVE, ACTION_ROUTE, ACTION_PROBE -> {
+            ACTION_JOY_STATE, ACTION_SERVO, ACTION_STREAM, ACTION_LOAD_SAVE, ACTION_ROUTE, ACTION_PROBE, ACTION_TELEM -> {
                 if (!engineReady()) {
                     Log.i(TAG, "$action ignored: engine not running")
                     return
@@ -186,6 +186,11 @@ class DebugInputReceiver(private val engineReady: () -> Boolean) : BroadcastRece
                 nativeProbe(dx, dy, dist)
                 Log.i(TAG, "probe dx=$dx dy=$dy dist=$dist")
             }
+            ACTION_TELEM -> {
+                val on = intent.getBooleanExtra("on", false)
+                nativeTelem(on)
+                Log.i(TAG, "telem on=$on")
+            }
         }
     }
 
@@ -271,6 +276,9 @@ class DebugInputReceiver(private val engineReady: () -> Boolean) : BroadcastRece
         private external fun nativeProbe(dx: Float, dy: Float, dist: Float)
 
         @JvmStatic
+        private external fun nativeTelem(on: Boolean)
+
+        @JvmStatic
         private external fun nativeLoadSave(path: String)
 
         @JvmStatic
@@ -287,6 +295,7 @@ class DebugInputReceiver(private val engineReady: () -> Boolean) : BroadcastRece
         const val ACTION_LOAD_SAVE = "is.xyz.omw.debug.LOAD_SAVE"
         const val ACTION_ROUTE = "is.xyz.omw.debug.ROUTE"
         const val ACTION_PROBE = "is.xyz.omw.debug.PROBE"
+        const val ACTION_TELEM = "is.xyz.omw.debug.TELEM"
         const val ACTION_STATE = "is.xyz.omw.debug.STATE"
         const val ACTION_INFO = "is.xyz.omw.debug.INFO"
 
