@@ -121,8 +121,16 @@ def main():
         t.start()
     try:
         deadline = time.time() + args.duration
+        next_stream = time.time() + 20.0
         while time.time() < deadline:
             time.sleep(0.5)
+            # Re-assert STREAM: a broadcast at the title screen is dropped
+            # by the receiver's engine-ready gate, and an engine restart
+            # mid-recording loses the setting — so refresh it periodically.
+            if time.time() > next_stream:
+                bc("is.xyz.omw.debug.STREAM", "--ei", "period",
+                   str(args.stream_period))
+                next_stream += 20.0
     except KeyboardInterrupt:
         pass
     finally:
