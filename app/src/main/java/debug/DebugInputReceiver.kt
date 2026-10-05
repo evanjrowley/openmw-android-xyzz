@@ -73,7 +73,7 @@ class DebugInputReceiver(private val engineReady: () -> Boolean) : BroadcastRece
             ACTION_INFO -> logDeviceInfo()
             ACTION_STATE -> requestEngineState(intent)
             ACTION_JOY_AXIS, ACTION_JOY_STICK, ACTION_JOY_PULSE, ACTION_PAD_BUTTON,
-            ACTION_JOY_STATE, ACTION_SERVO, ACTION_STREAM, ACTION_LOAD_SAVE -> {
+            ACTION_JOY_STATE, ACTION_SERVO, ACTION_STREAM, ACTION_LOAD_SAVE, ACTION_ROUTE, ACTION_PROBE -> {
                 if (!engineReady()) {
                     Log.i(TAG, "$action ignored: engine not running")
                     return
@@ -174,6 +174,18 @@ class DebugInputReceiver(private val engineReady: () -> Boolean) : BroadcastRece
                     Log.i(TAG, "load save path=$path")
                 }
             }
+            ACTION_ROUTE -> {
+                val hint = intent.getStringExtra(EXTRA_HINT) ?: ""
+                nativeRoute(hint)
+                Log.i(TAG, "route hint=$hint")
+            }
+            ACTION_PROBE -> {
+                val dx = intent.getFloatExtra("dx", 0f)
+                val dy = intent.getFloatExtra("dy", 0f)
+                val dist = intent.getFloatExtra("dist", 250f)
+                nativeProbe(dx, dy, dist)
+                Log.i(TAG, "probe dx=$dx dy=$dy dist=$dist")
+            }
         }
     }
 
@@ -253,6 +265,12 @@ class DebugInputReceiver(private val engineReady: () -> Boolean) : BroadcastRece
         private external fun nativeStream(periodFrames: Int)
 
         @JvmStatic
+        private external fun nativeRoute(hint: String)
+
+        @JvmStatic
+        private external fun nativeProbe(dx: Float, dy: Float, dist: Float)
+
+        @JvmStatic
         private external fun nativeLoadSave(path: String)
 
         @JvmStatic
@@ -267,6 +285,8 @@ class DebugInputReceiver(private val engineReady: () -> Boolean) : BroadcastRece
         const val ACTION_SERVO = "is.xyz.omw.debug.SERVO"
         const val ACTION_STREAM = "is.xyz.omw.debug.STREAM"
         const val ACTION_LOAD_SAVE = "is.xyz.omw.debug.LOAD_SAVE"
+        const val ACTION_ROUTE = "is.xyz.omw.debug.ROUTE"
+        const val ACTION_PROBE = "is.xyz.omw.debug.PROBE"
         const val ACTION_STATE = "is.xyz.omw.debug.STATE"
         const val ACTION_INFO = "is.xyz.omw.debug.INFO"
 

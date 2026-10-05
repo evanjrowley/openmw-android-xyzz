@@ -162,6 +162,8 @@ class GameActivity : SDLActivity() {
             addAction(DebugInputReceiver.ACTION_SERVO)
             addAction(DebugInputReceiver.ACTION_STREAM)
             addAction(DebugInputReceiver.ACTION_LOAD_SAVE)
+            addAction(DebugInputReceiver.ACTION_ROUTE)
+            addAction(DebugInputReceiver.ACTION_PROBE)
             addAction(DebugInputReceiver.ACTION_STATE)
             addAction(DebugInputReceiver.ACTION_INFO)
         }
